@@ -31,7 +31,31 @@ import (
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
+type ipTestsParams struct {
+	Cidr         string;
+	TooSmallCidr string;
+	Gw           string;
+	Vm           string;
+}
+
 var _ = Describe("Common Methods", func() {
+	testParams:=  struct {
+		ipv4 ipTestsParams;
+		ipv6 ipTestsParams;
+	}{
+		ipTestsParams{
+			Cidr:         "10.0.0.0/30",
+			TooSmallCidr: "10.0.0.0/31",
+			Gw:           "10.0.0.1/30",
+			Vm:           "10.0.0.2/30",
+		},
+		ipTestsParams{
+			Cidr:         "fd10:0:2::/120",
+			TooSmallCidr: "fd10:0:2::/127",
+			Gw:           "fd10:0:2::1/120",
+			Vm:           "fd10:0:2::2/120",
+		},
+	}
 	pid := "self"
 	Context("Functions Read and Write from cache", func() {
 		It("should persist interface payload", func() {
@@ -70,26 +94,26 @@ var _ = Describe("Common Methods", func() {
 	Context("GetAvailableAddrsFromCIDR function", func() {
 		It("Should return 2 addresses", func() {
 			networkHandler := NetworkUtilsHandler{}
-			gw, vm, err := networkHandler.GetHostAndGwAddressesFromCIDR("10.0.0.0/30")
+			gw, vm, err := networkHandler.GetHostAndGwAddressesFromCIDR(testParams.ipv4.Cidr)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(gw).To(Equal("10.0.0.1/30"))
-			Expect(vm).To(Equal("10.0.0.2/30"))
+			Expect(gw).To(Equal(testParams.ipv4.Gw))
+			Expect(vm).To(Equal(testParams.ipv4.Vm))
 		})
 		It("Should return 2 IPV6 addresses", func() {
 			networkHandler := NetworkUtilsHandler{}
-			gw, vm, err := networkHandler.GetHostAndGwAddressesFromCIDR("fd10:0:2::/120")
+			gw, vm, err := networkHandler.GetHostAndGwAddressesFromCIDR(testParams.ipv6.Cidr)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(gw).To(Equal("fd10:0:2::1/120"))
-			Expect(vm).To(Equal("fd10:0:2::2/120"))
+			Expect(gw).To(Equal(testParams.ipv6.Gw))
+			Expect(vm).To(Equal(testParams.ipv6.Vm))
 		})
 		It("Should fail when the subnet is too small", func() {
 			networkHandler := NetworkUtilsHandler{}
-			_, _, err := networkHandler.GetHostAndGwAddressesFromCIDR("10.0.0.0/31")
+			_, _, err := networkHandler.GetHostAndGwAddressesFromCIDR(testParams.ipv4.TooSmallCidr)
 			Expect(err).To(HaveOccurred())
 		})
 		It("Should fail when the IPV6 subnet is too small", func() {
 			networkHandler := NetworkUtilsHandler{}
-			_, _, err := networkHandler.GetHostAndGwAddressesFromCIDR("fd10:0:2::/127")
+			_, _, err := networkHandler.GetHostAndGwAddressesFromCIDR(testParams.ipv6.TooSmallCidr)
 			Expect(err).To(HaveOccurred())
 		})
 	})

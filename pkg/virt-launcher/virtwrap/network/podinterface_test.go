@@ -56,12 +56,14 @@ var _ = Describe("Pod Network", func() {
 	var masqueradeTestNic *VIF
 	var masqueradeDummyName string
 	var masqueradeDummy *netlink.Dummy
+	var ipv4CidrStr string
 	var masqueradeGwStr string
 	var masqueradeGwAddr *netlink.Addr
 	var masqueradeGwIp string
 	var masqueradeVmStr string
 	var masqueradeVmAddr *netlink.Addr
 	var masqueradeVmIp string
+	var ipv6CidrStr string
 	var masqueradeIpv6GwStr string
 	var masqueradeIpv6GwAddr *netlink.Addr
 	var masqueradeGwIpv6 string
@@ -106,12 +108,14 @@ var _ = Describe("Pod Network", func() {
 			Mtu:     1410,
 			Gateway: gw}
 
+		ipv4CidrStr = api.DefaultVMCIDR
 		masqueradeGwStr = "10.0.2.1/30"
 		masqueradeGwAddr, _ = netlink.ParseAddr(masqueradeGwStr)
 		masqueradeGwIp = masqueradeGwAddr.IP.String()
 		masqueradeVmStr = "10.0.2.2/30"
 		masqueradeVmAddr, _ = netlink.ParseAddr(masqueradeVmStr)
 		masqueradeVmIp = masqueradeVmAddr.IP.String()
+		ipv6CidrStr = api.DefaultVMIpv6CIDR
 		masqueradeIpv6GwStr = "fd10:0:2::1/120"
 		masqueradeIpv6GwAddr, _ = netlink.ParseAddr(masqueradeIpv6GwStr)
 		masqueradeGwIpv6 = masqueradeIpv6GwAddr.IP.String()
@@ -188,8 +192,8 @@ var _ = Describe("Pod Network", func() {
 		mockNetwork.EXPECT().AddrAdd(bridgeTest, masqueradeGwAddr).Return(nil)
 		mockNetwork.EXPECT().AddrAdd(bridgeTest, masqueradeIpv6GwAddr).Return(nil)
 		mockNetwork.EXPECT().StartDHCP(masqueradeTestNic, masqueradeGwAddr, api.DefaultBridgeName, nil)
-		mockNetwork.EXPECT().GetHostAndGwAddressesFromCIDR(api.DefaultVMCIDR).Return("10.0.2.1/30", "10.0.2.2/30", nil)
-		mockNetwork.EXPECT().GetHostAndGwAddressesFromCIDR(api.DefaultVMIpv6CIDR).Return("fd10:0:2::1/120", "fd10:0:2::2/120", nil)
+		mockNetwork.EXPECT().GetHostAndGwAddressesFromCIDR(ipv4CidrStr).Return(masqueradeGwStr, masqueradeVmStr, nil)
+		mockNetwork.EXPECT().GetHostAndGwAddressesFromCIDR(ipv6CidrStr).Return(masqueradeIpv6GwStr, masqueradeIpv6VmStr, nil)
 		// Global nat rules using iptables
 		mockNetwork.EXPECT().ConfigureIpv6Forwarding().Return(nil)
 		mockNetwork.EXPECT().GetNFTIPString(iptables.ProtocolIPv4).Return("ip").AnyTimes()
