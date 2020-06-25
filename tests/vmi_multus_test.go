@@ -40,6 +40,7 @@ import (
 	v13 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
 
+	sriovnet1 "github.com/openshift/sriov-network-operator/pkg/apis/sriovnetwork/v1"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 
 	v1 "kubevirt.io/client-go/api/v1"
