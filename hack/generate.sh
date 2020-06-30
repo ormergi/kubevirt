@@ -57,6 +57,13 @@ client-gen --clientset-name versioned \
     --output-package ${CLIENT_GEN_BASE}/external-snapshotter/clientset \
     --go-header-file ${KUBEVIRT_DIR}/hack/boilerplate/boilerplate.go.txt
 
+client-gen --clientset-name versioned \
+    --input-base github.com/openshift/sriov-network-operator/pkg/apis \
+    --input sriovnetwork/v1 \
+    --output-base ${KUBEVIRT_DIR}/staging/src \
+    --output-package ${CLIENT_GEN_BASE}/sriov-network-operator/clientset \
+    --go-header-file ${KUBEVIRT_DIR}/hack/boilerplate/boilerplate.go.txt
+
 find ${KUBEVIRT_DIR}/pkg/ -name "*generated*.go" -exec rm {} -f \;
 
 ${KUBEVIRT_DIR}/hack/build-go.sh generate ${WHAT}
