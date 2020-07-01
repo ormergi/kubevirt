@@ -1737,8 +1737,16 @@ func removeNamespaces() {
 	fmt.Println("")
 	for _, namespace := range testNamespaces {
 		fmt.Printf("Waiting for namespace %s to be removed, this can take a while ...\n", namespace)
-		EventuallyWithOffset(1, func() bool { return errors.IsNotFound(virtCli.CoreV1().Namespaces().Delete(namespace, nil)) }, 240*time.Second, 1*time.Second).
-			Should(BeTrue())
+		EventuallyWithOffset(1, func() bool {
+			currentNamespace, err := virtCli.CoreV1().Namespaces().Get(namespace, metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("should get namesapce: %s", namespace))
+
+			By(fmt.Sprintf("Deleteing namespace: \n%s\n finelizers: \n%+v\n ownerRefrences: \n%+v\n yaml: \n%+v\n",
+				namespace, currentNamespace.Finalizers, currentNamespace.OwnerReferences, currentNamespace))
+			return errors.IsNotFound(virtCli.CoreV1().Namespaces().Delete(namespace, nil))
+		},
+			240*time.Second, 1*time.Second).
+			Should(BeTrue(), fmt.Sprintf("should successfully delete namespace %s", namespace))
 	}
 }
 
