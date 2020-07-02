@@ -607,17 +607,16 @@ var _ = Describe("SRIOV", func() {
 		Expect(result.Error()).NotTo(HaveOccurred())
 	})
 
+	testNamespaces := []string{tests.NamespaceTestAlternative, tests.NamespaceTestDefault}
+
 	BeforeEach(func() {
 		// Multus tests need to ensure that old VMIs are gone
-		Expect(virtClient.RestClient().Delete().Namespace(tests.NamespaceTestDefault).Resource("virtualmachineinstances").Do().Error()).To(Succeed())
-		Expect(virtClient.RestClient().Delete().Namespace(tests.NamespaceTestAlternative).Resource("virtualmachineinstances").Do().Error()).To(Succeed())
-		Eventually(func() int {
-			list1, err := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).List(&v13.ListOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			list2, err := virtClient.VirtualMachineInstance(tests.NamespaceTestAlternative).List(&v13.ListOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			return len(list1.Items) + len(list2.Items)
-		}, 6*time.Minute, 1*time.Second).Should(BeZero())
+		waitForCleanupAfterTest(virtClient, testNamespaces, []string{"virtualmachineinstances"}, 6*time.Minute)
+	})
+
+	AfterEach(func() {
+		// It is necessary to double check we leave no VMI in between tests
+		waitForCleanupAfterTest(virtClient, testNamespaces, []string{"virtualmachineinstances"}, 6*time.Minute)
 	})
 
 	Context("VirtualMachineInstance with sriov plugin interface", func() {
@@ -876,6 +875,25 @@ var _ = Describe("SRIOV", func() {
 		})
 	})
 })
+
+func waitForCleanupAfterTest(client kubecli.KubevirtClient, namespaces []string, objectKinds []string, timeout time.Duration ) {
+	for _, namesapce:= range namespaces {
+		for _, objectKind := range objectKinds {
+			result := client.RestClient().Delete().
+				Namespace(namesapce).
+				Resource(objectKind).
+				Do()
+			Expect(result.Error()).ToNot(HaveOccurred(), fmt.Sprintf("should successfully delete all resources of kind %s from namesapce %s", objectKind, namesapce))
+		}
+
+		Eventually(func() int {
+			list, err := client.VirtualMachineInstance(namesapce).List(&v13.ListOptions{})
+			Expect(err).ToNot(HaveOccurred(), "should return no vmis")
+			return len(list.Items)
+		}, timeout, 1*time.Second).Should(BeZero())
+	}
+
+}
 
 func cidrToIP(cidr string) string {
 	ip, _, err := net.ParseCIDR(cidr)
