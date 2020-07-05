@@ -647,12 +647,12 @@ var _ = Describe("SRIOV", func() {
 			// fedora requires some more memory to boot without kernel panics
 			vmi.Spec.Domain.Resources.Requests[k8sv1.ResourceName("memory")] = resource.MustParse("1024M")
 
-			return
+			return vmi
 		}
 
 		startVmi := func(vmi *v1.VirtualMachineInstance) {
 			_, err = virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(vmi)
-			Expect(err).ToNot(HaveOccurred())
+			Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("should successfully create vmi '%s': \n %+v", vmi.Name, vmi))
 			return
 		}
 
