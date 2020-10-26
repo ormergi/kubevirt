@@ -5,6 +5,8 @@ set -ex
 source $(dirname "$0")/common.sh
 source $(dirname "$0")/config.sh
 
+KUBEVIRTCI_WITH_PR="${KUBEVIRTCI_WITH_PR:-}"
+
 # update cluster-up if needed
 version_file="cluster-up/version.txt"
 sha_file="cluster-up-sha.txt"
@@ -24,6 +26,23 @@ function getClusterUpShasum() {
     )
 }
 
+function fetch_kubevirtci_with_pr() {
+    local -r pr_number=$1
+
+    kubevirt_path=${PWD}
+      tmp=$(mktemp -d /tmp/kubevirtci.XXXX)
+      pushd $tmp
+        git clone https://github.com/kubevirt/kubevirtci --branch master --depth 1 .
+        pr_branch="pr$pr_number"
+        git fetch origin "pull/$pr_number/head:$pr_branch"
+        git checkout "$pr_branch"
+
+        kubevirtci_git_hash=$(git rev-parse HEAD)
+        rsync -a cluster-up/* $kubevirt_path/cluster-up
+      popd
+      rm -rf $tmp
+}
+
 # check if we got a new cluster-up git commit hash
 if [[ -f "${version_file}" ]] && [[ $(cat ${version_file}) == ${kubevirtci_git_hash} ]]; then
     # check if files are modified
@@ -39,7 +58,11 @@ else
 fi
 if [[ "$download_cluster_up" == true ]]; then
     echo "downloading cluster-up"
-    rm -rf cluster-up
+
+    if [ -n "$KUBEVIRTCI_WITH_PR" ]; then
+      fetch_kubevirtci_with_pr "$KUBEVIRTCI_WITH_PR"
+    fi
+
     curl -L https://github.com/kubevirt/kubevirtci/archive/${kubevirtci_git_hash}/kubevirtci.tar.gz | tar xz kubevirtci-${kubevirtci_git_hash}/cluster-up --strip-component 1
 
     echo ${kubevirtci_git_hash} >${version_file}
