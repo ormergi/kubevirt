@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["json.go"],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/vcontext/json",
+    importpath = "github.com/coreos/vcontext/json",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/ajeddeloh/go-json:go_default_library",
+        "//vendor/github.com/coreos/vcontext/tree:go_default_library",
+    ],
+)

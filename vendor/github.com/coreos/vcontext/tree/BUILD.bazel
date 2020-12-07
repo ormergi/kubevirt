@@ -1,0 +1,10 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["tree.go"],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/vcontext/tree",
+    importpath = "github.com/coreos/vcontext/tree",
+    visibility = ["//visibility:public"],
+    deps = ["//vendor/github.com/coreos/vcontext/path:go_default_library"],
+)

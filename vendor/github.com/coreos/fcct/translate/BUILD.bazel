@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "set.go",
+        "translate.go",
+        "util.go",
+    ],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/fcct/translate",
+    importpath = "github.com/coreos/fcct/translate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/coreos/ignition/v2/config/util:go_default_library",
+        "//vendor/github.com/coreos/vcontext/path:go_default_library",
+    ],
+)

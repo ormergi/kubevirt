@@ -58,6 +58,7 @@ import (
 	v1alpha16 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1alpha1"
 	versioned2 "kubevirt.io/client-go/generated/network-attachment-definition-client/clientset/versioned"
 	versioned3 "kubevirt.io/client-go/generated/prometheus-operator/clientset/versioned"
+	versioned4 "kubevirt.io/client-go/generated/sriov-network/clientset/versioned"
 )
 
 // Mock of KubevirtClient interface
@@ -219,6 +220,16 @@ func (_m *MockKubevirtClient) NetworkClient() versioned2.Interface {
 
 func (_mr *_MockKubevirtClientRecorder) NetworkClient() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "NetworkClient")
+}
+
+func (_m *MockKubevirtClient) SriovNetworkClient() versioned4.Interface {
+	ret := _m.ctrl.Call(_m, "SriovNetworkClient")
+	ret0, _ := ret[0].(versioned4.Interface)
+	return ret0
+}
+
+func (_mr *_MockKubevirtClientRecorder) SriovNetworkClient() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SriovNetworkClient")
 }
 
 func (_m *MockKubevirtClient) ExtensionsClient() clientset.Interface {

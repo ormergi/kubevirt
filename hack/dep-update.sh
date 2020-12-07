@@ -6,7 +6,7 @@ export GO111MODULE=on
 
 (
     cd staging/src/kubevirt.io/client-go
-    go get $@ ./...
+    #go get $@ ./...
     go mod tidy
 )
 

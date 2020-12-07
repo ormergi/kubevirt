@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["builder.go"],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/openshift/machine-config-operator/internal/clients",
+    importpath = "github.com/openshift/machine-config-operator/internal/clients",
+    visibility = ["//vendor/github.com/openshift/machine-config-operator:__subpackages__"],
+    deps = [
+        "//staging/src/github.com/golang/glog:go_default_library",
+        "//vendor/github.com/openshift/client-go/config/clientset/versioned:go_default_library",
+        "//vendor/github.com/openshift/client-go/operator/clientset/versioned:go_default_library",
+        "//vendor/github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned:go_default_library",
+        "//vendor/k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset:go_default_library",
+        "//vendor/k8s.io/client-go/kubernetes:go_default_library",
+        "//vendor/k8s.io/client-go/rest:go_default_library",
+        "//vendor/k8s.io/client-go/tools/clientcmd:go_default_library",
+    ],
+)

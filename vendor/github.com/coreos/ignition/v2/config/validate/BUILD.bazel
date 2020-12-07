@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["validate.go"],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/ignition/v2/config/validate",
+    importpath = "github.com/coreos/ignition/v2/config/validate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/coreos/ignition/v2/config/shared/errors:go_default_library",
+        "//vendor/github.com/coreos/ignition/v2/config/util:go_default_library",
+        "//vendor/github.com/coreos/vcontext/json:go_default_library",
+        "//vendor/github.com/coreos/vcontext/path:go_default_library",
+        "//vendor/github.com/coreos/vcontext/report:go_default_library",
+        "//vendor/github.com/coreos/vcontext/tree:go_default_library",
+        "//vendor/github.com/coreos/vcontext/validate:go_default_library",
+    ],
+)

@@ -38,6 +38,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/pointer"
 
+	sriov "github.com/openshift/sriov-network-operator/api/v1"
+
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 
@@ -52,6 +54,7 @@ import (
 )
 
 const (
+	sriovNetworkOperatorNamespace = "sriov-network-operator"
 	postUrl                = "/apis/k8s.cni.cncf.io/v1/namespaces/%s/network-attachment-definitions/%s"
 	linuxBridgeConfCRD     = `{"apiVersion":"k8s.cni.cncf.io/v1","kind":"NetworkAttachmentDefinition","metadata":{"name":"%s","namespace":"%s"},"spec":{"config":"{ \"cniVersion\": \"0.3.1\", \"name\": \"mynet\", \"plugins\": [{\"type\": \"bridge\", \"bridge\": \"br10\", \"vlan\": 100, \"ipam\": {}},{\"type\": \"tuning\"}]}"}}`
 	ptpConfCRD             = `{"apiVersion":"k8s.cni.cncf.io/v1","kind":"NetworkAttachmentDefinition","metadata":{"name":"%s","namespace":"%s"},"spec":{"config":"{ \"cniVersion\": \"0.3.1\", \"name\": \"mynet\", \"plugins\": [{\"type\": \"ptp\", \"ipam\": { \"type\": \"host-local\", \"subnet\": \"10.1.1.0/24\" }},{\"type\": \"tuning\"}]}"}}`
@@ -607,13 +610,32 @@ var _ = Describe("[Serial]SRIOV", func() {
 		}
 
 		// Create two sriov networks referring to the same resource name
+		sriovNetwork1 := sriov.SriovNetwork{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "sriov",
+				Namespace: sriovNetworkOperatorNamespace,
+			},
+			Spec: sriov.SriovNetworkSpec{
+				NetworkNamespace:  tests.NamespaceTestDefault,
+				ResourceName:      sriovResourceName,
+				IPAM:              "{ \"type\": \"host-local\", \"subnet\": \"10.1.1.0/24\" }",
+			},
+		}
+
+		_, err := virtClient.SriovNetworkClient().V1().SriovNetworks(sriovNetworkOperatorNamespace).Create(&sriovNetwork1)
+		if err != nil {
+
+		}
+		Expect(err).NotTo(HaveOccurred(), "should create sriov network with sriov client set successfully")
+		/*
+			result := virtClient.RestClient().
+				Post().
+				RequestURI(fmt.Sprintf(postUrl, tests.NamespaceTestDefault, "sriov")).
+				Body([]byte(fmt.Sprintf(sriovConfCRD, "sriov", tests.NamespaceTestDefault, sriovResourceName))).
+				Do()
+			Expect(result.Error()).NotTo(HaveOccurred())
+		*/
 		result := virtClient.RestClient().
-			Post().
-			RequestURI(fmt.Sprintf(postUrl, tests.NamespaceTestDefault, "sriov")).
-			Body([]byte(fmt.Sprintf(sriovConfCRD, "sriov", tests.NamespaceTestDefault, sriovResourceName))).
-			Do()
-		Expect(result.Error()).NotTo(HaveOccurred())
-		result = virtClient.RestClient().
 			Post().
 			RequestURI(fmt.Sprintf(postUrl, tests.NamespaceTestDefault, "sriov2")).
 			Body([]byte(fmt.Sprintf(sriovConfCRD, "sriov2", tests.NamespaceTestDefault, sriovResourceName))).

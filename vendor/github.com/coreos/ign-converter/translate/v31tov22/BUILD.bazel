@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["v31tov22.go"],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/ign-converter/translate/v31tov22",
+    importpath = "github.com/coreos/ign-converter/translate/v31tov22",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/coreos/ign-converter/util:go_default_library",
+        "//vendor/github.com/coreos/ignition/config/v2_2/types:go_default_library",
+        "//vendor/github.com/coreos/ignition/config/validate:go_default_library",
+        "//vendor/github.com/coreos/ignition/v2/config/v3_1/types:go_default_library",
+        "//vendor/github.com/coreos/ignition/v2/config/validate:go_default_library",
+    ],
+)

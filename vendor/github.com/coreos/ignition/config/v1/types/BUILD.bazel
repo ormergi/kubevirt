@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "config.go",
+        "disk.go",
+        "file.go",
+        "filesystem.go",
+        "group.go",
+        "networkd.go",
+        "partition.go",
+        "passwd.go",
+        "path.go",
+        "raid.go",
+        "storage.go",
+        "systemd.go",
+        "unit.go",
+        "user.go",
+    ],
+    importmap = "kubevirt.io/kubevirt/vendor/github.com/coreos/ignition/config/v1/types",
+    importpath = "github.com/coreos/ignition/config/v1/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/coreos/go-semver/semver:go_default_library",
+        "//vendor/github.com/coreos/ignition/config/shared/errors:go_default_library",
+        "//vendor/github.com/coreos/ignition/config/validate/report:go_default_library",
+    ],
+)

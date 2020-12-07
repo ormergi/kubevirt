@@ -43,6 +43,7 @@ import (
 	generatedclient "kubevirt.io/client-go/generated/kubevirt/clientset/versioned"
 	networkclient "kubevirt.io/client-go/generated/network-attachment-definition-client/clientset/versioned"
 	promclient "kubevirt.io/client-go/generated/prometheus-operator/clientset/versioned"
+	sriovclient "kubevirt.io/client-go/generated/sriov-network/clientset/versioned"
 )
 
 var (
@@ -107,6 +108,11 @@ func GetKubevirtSubresourceClientFromFlags(master string, kubeconfig string) (Ku
 		return nil, err
 	}
 
+	sriovNetworkClient, err := sriovclient.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	extensionsClient, err := extclient.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -140,6 +146,7 @@ func GetKubevirtSubresourceClientFromFlags(master string, kubeconfig string) (Ku
 		generatedKubeVirtClient,
 		cdiClient,
 		networkClient,
+		sriovNetworkClient,
 		extensionsClient,
 		secClient,
 		discoveryClient,
@@ -253,6 +260,11 @@ func GetKubevirtClientFromRESTConfig(config *rest.Config) (KubevirtClient, error
 		return nil, err
 	}
 
+	sriovNetworkClient, err := sriovnetworkclient.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	extensionsClient, err := extclient.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -286,6 +298,7 @@ func GetKubevirtClientFromRESTConfig(config *rest.Config) (KubevirtClient, error
 		generatedKubeVirtClient,
 		cdiClient,
 		networkClient,
+		sriovNetworkClient,
 		extensionsClient,
 		secClient,
 		discoveryClient,

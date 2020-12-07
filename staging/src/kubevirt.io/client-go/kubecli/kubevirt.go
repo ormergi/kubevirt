@@ -44,6 +44,7 @@ import (
 	vmsnapshotv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1alpha1"
 	networkclient "kubevirt.io/client-go/generated/network-attachment-definition-client/clientset/versioned"
 	promclient "kubevirt.io/client-go/generated/prometheus-operator/clientset/versioned"
+	sriovnetworkclient "kubevirt.io/client-go/generated/sriov-network/clientset/versioned"
 )
 
 type KubevirtClient interface {
@@ -61,6 +62,7 @@ type KubevirtClient interface {
 	GeneratedKubeVirtClient() generatedclient.Interface
 	CdiClient() cdiclient.Interface
 	NetworkClient() networkclient.Interface
+	SriovNetworkClient() sriovnetworkclient.Interface
 	ExtensionsClient() extclient.Interface
 	SecClient() secv1.SecurityV1Interface
 	DiscoveryClient() discovery.DiscoveryInterface
@@ -78,6 +80,7 @@ type kubevirt struct {
 	generatedKubeVirtClient *generatedclient.Clientset
 	cdiClient               *cdiclient.Clientset
 	networkClient           *networkclient.Clientset
+	sriovNetworkClient      *sriovnetworkclient.Clientset
 	extensionsClient        *extclient.Clientset
 	secClient               *secv1.SecurityV1Client
 	discoveryClient         *discovery.DiscoveryClient
@@ -96,6 +99,10 @@ func (k kubevirt) CdiClient() cdiclient.Interface {
 
 func (k kubevirt) NetworkClient() networkclient.Interface {
 	return k.networkClient
+}
+
+func (k kubevirt) SriovNetworkClient() sriovnetworkclient.Interface {
+	return k.sriovNetworkClient
 }
 
 func (k kubevirt) ExtensionsClient() extclient.Interface {
