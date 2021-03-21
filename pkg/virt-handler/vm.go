@@ -2514,6 +2514,13 @@ func (d *VirtualMachineController) finalizeMigration(vmi *v1.VirtualMachineInsta
 	if err != nil {
 		return err
 	}
+
+	err = d.podIsolationDetector.AdjustResources(vmi)
+	if err != nil {
+		log.Log.Object(vmi).Reason(err).Error("failed to finalize migration")
+		return err
+	}
+
 	err = client.FinalizeVirtualMachineMigration(vmi)
 	if err != nil {
 		log.Log.Object(vmi).Reason(err).Error("failed to finalize migration")
