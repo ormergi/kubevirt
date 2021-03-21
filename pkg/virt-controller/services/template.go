@@ -61,13 +61,10 @@ const virtiofsDebugLogs = "virtiofsdDebugLogs"
 
 const MultusNetworksAnnotation = "k8s.v1.cni.cncf.io/networks"
 
-const (
-	CAP_NET_ADMIN    = "NET_ADMIN"
-	CAP_NET_RAW      = "NET_RAW"
-	CAP_SYS_ADMIN    = "SYS_ADMIN"
-	CAP_SYS_NICE     = "SYS_NICE"
-	CAP_SYS_RESOURCE = "SYS_RESOURCE"
-)
+const CAP_NET_ADMIN = "NET_ADMIN"
+const CAP_NET_RAW = "NET_RAW"
+const CAP_SYS_ADMIN = "SYS_ADMIN"
+const CAP_SYS_NICE = "SYS_NICE"
 
 // LibvirtStartupDelay is added to custom liveness and readiness probes initial delay value.
 // Libvirt needs roughly 10 seconds to start.
@@ -75,9 +72,9 @@ const LibvirtStartupDelay = 10
 
 //These perfixes for node feature discovery, are used in a NodeSelector on the pod
 //to match a VirtualMachineInstance CPU model(Family) and/or features to nodes that support them.
-const NFD_CPU_MODEL_PREFIX = "cpu-model.node.kubevirt.io/"
-const NFD_CPU_FEATURE_PREFIX = "cpu-feature.node.kubevirt.io/"
-const NFD_KVM_INFO_PREFIX = "hyperv.node.kubevirt.io/"
+const NFD_CPU_MODEL_PREFIX = "feature.node.kubernetes.io/cpu-model-"
+const NFD_CPU_FEATURE_PREFIX = "feature.node.kubernetes.io/cpu-feature-"
+const NFD_KVM_INFO_PREFIX = "feature.node.kubernetes.io/kvm-info-cap-hyperv-"
 
 const MULTUS_RESOURCE_NAME_ANNOTATION = "k8s.v1.cni.cncf.io/resourceName"
 const MULTUS_DEFAULT_NETWORK_CNI_ANNOTATION = "v1.multus-cni.io/default-network"
@@ -1372,19 +1369,6 @@ func (t *templateService) RenderHotplugAttachmentPodTemplate(volume *v1.Volume, 
 	return pod, nil
 }
 
-func getVirtiofsCapabilities() []k8sv1.Capability {
-	return []k8sv1.Capability{
-		"CHOWN",
-		"DAC_OVERRIDE",
-		"FOWNER",
-		"FSETID",
-		"SETGID",
-		"SETUID",
-		"MKNOD",
-		"SETFCAP",
-	}
-}
-
 func getRequiredCapabilities(vmi *v1.VirtualMachineInstance, config *virtconfig.ClusterConfig) []k8sv1.Capability {
 	capabilities := []k8sv1.Capability{}
 
@@ -1399,13 +1383,6 @@ func getRequiredCapabilities(vmi *v1.VirtualMachineInstance, config *virtconfig.
 	// add CAP_SYS_ADMIN capability to allow virtiofs
 	if util.IsVMIVirtiofsEnabled(vmi) {
 		capabilities = append(capabilities, CAP_SYS_ADMIN)
-		capabilities = append(capabilities, getVirtiofsCapabilities()...)
-	}
-
-	// add SYS_RESOURCE capability to enable Live Migration for VM with SRIOV interfaces
-	// until https://bugzilla.redhat.com/show_bug.cgi?id=1916346 is resolved.
-	if config.SRIOVLiveMigrationEnabled() && util.IsSRIOVVmi(vmi) {
-		capabilities = append(capabilities, CAP_SYS_RESOURCE)
 	}
 
 	return capabilities
