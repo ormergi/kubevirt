@@ -91,6 +91,12 @@ var _ = Describe("Isolation", func() {
 			Expect(result.Pid()).To(Equal(os.Getpid()))
 		})
 
+		It("Should detect the Parent PID of the test suite", func() {
+			result, err := NewSocketBasedIsolationDetector(tmpDir).Whitelist([]string{"devices"}).Detect(vm)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.PPid()).To(Equal(os.Getppid()))
+		})
+
 		It("Should not detect any slice if there is no matching controller", func() {
 			_, err := NewSocketBasedIsolationDetector(tmpDir, cgroupParser).Whitelist([]string{"not_existing_slice"}).Detect(vm)
 			Expect(err).To(HaveOccurred())

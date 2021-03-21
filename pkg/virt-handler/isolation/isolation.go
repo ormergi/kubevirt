@@ -88,6 +88,7 @@ type socketBasedIsolationDetector struct {
 
 func (s *socketBasedIsolationDetector) DetectForSocket(vm *v1.VirtualMachineInstance, socket string) (IsolationResult, error) {
 	var pid int
+	var ppid int
 	var slice string
 	var err error
 	var controller []string
@@ -98,13 +99,19 @@ func (s *socketBasedIsolationDetector) DetectForSocket(vm *v1.VirtualMachineInst
 
 	}
 
+	if process, err := ps.FindProcess(pid); err != nil {
+		return nil, err
+	} else {
+		ppid = process.PPid()
+	}
+
 	// Look up the cgroup slice based on the whitelisted controller
 	if controller, slice, err = s.getSlice(pid); err != nil {
 		log.Log.Object(vm).Reason(err).Errorf("Could not get cgroup slice for Pid %d", pid)
 		return nil, err
 	}
 
-	return NewIsolationResult(pid, slice, controller), nil
+	return NewIsolationResult(pid, ppid, slice, controller), nil
 }
 
 // NewSocketBasedIsolationDetector takes socketDir and creates a socket based IsolationDetector
@@ -134,12 +141,26 @@ func (s *socketBasedIsolationDetector) Detect(vm *v1.VirtualMachineInstance) (Is
 
 // standard golang libraries don't provide API to set runtime limits
 // for other processes, so we have to directly call to kernel
-func prLimit(pid int, limit uintptr, rlimit *unix.Rlimit) error {
+func getPrLimit(pid int, limit uintptr, rlimit *unix.Rlimit) error {
+	_, _, errno := unix.RawSyscall6(unix.SYS_PRLIMIT64,
+		uintptr(pid),
+		limit,
+		0,
+		uintptr(unsafe.Pointer(rlimit)), // #nosec used in unix RawSyscall6
+		0, 0)
+	if errno != 0 {
+		return fmt.Errorf("Error setting prlimit: %v", errno)
+	}
+	return nil
+}
+
+func setPrLimit(pid int, limit uintptr, rlimit *unix.Rlimit) error {
 	_, _, errno := unix.RawSyscall6(unix.SYS_PRLIMIT64,
 		uintptr(pid),
 		limit,
 		uintptr(unsafe.Pointer(rlimit)), // #nosec used in unix RawSyscall6
-		0, 0, 0)
+		0,
+		0, 0)
 	if errno != 0 {
 		return fmt.Errorf("Error setting prlimit: %v", errno)
 	}
@@ -152,45 +173,107 @@ func (s *socketBasedIsolationDetector) AdjustResources(vm *v1.VirtualMachineInst
 		return nil
 	}
 
-	// bump memlock ulimit for libvirtd
-	res, err := s.Detect(vm)
+	// make the best estimate for memory required by libvirt
+	memlockSize, err := getMemlockSize(vm)
 	if err != nil {
 		return err
 	}
-	launcherPid := res.Pid()
 
-	processes, err := ps.Processes()
+	// bump memlock ulimit for libvirtd and qemu
+	libvirtProcesses, err := s.filterVirtLaunchersLibvirtProcesses(vm)
 	if err != nil {
-		return fmt.Errorf("failed to get all processes: %v", err)
+		return err
 	}
 
+	for _, process := range libvirtProcesses {
+		adjustMemoryResourceLimit(process, memlockSize)
+	}
+
+	return nil
+}
+
+func (s *socketBasedIsolationDetector) filterVirtLaunchersLibvirtProcesses(vmi *v1.VirtualMachineInstance) ([]ps.Process, error) {
+	res, err := s.Detect(vmi)
+	if err != nil {
+		return nil, err
+	}
+	launcherPid := res.Pid()
+	log.Log.Object(vmi).Infof("debug: adjust memlock: virt-launcher pid: %d", launcherPid)
+
+	// qemu-kvm process ppid is virt-launcher root process id
+	launcherParentPid := res.PPid()
+	log.Log.Object(vmi).Infof("debug: adjust memlock: virt-launcher ppid: %d", launcherParentPid)
+
+	var filteredProcesses []ps.Process
+	processes, err := ps.Processes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all processes: %v", err)
+	}
+	filteredProcesses = filterProcessesByParentPID(processes, []int{launcherPid, launcherParentPid})
+	filteredProcesses = filterProcessesByExecutable(filteredProcesses, []string{"libvirtd", "qemu-kvm"})
+
+	log.Log.Info("debug: adjust memlock: filtered processes:")
+	for _, process := range filteredProcesses {
+		log.Log.Object(vmi).Infof("pid %d, ppid %d, exec %s", process.Pid(), process.PPid(), process.Executable())
+	}
+	return filteredProcesses, nil
+}
+
+func filterProcessesByParentPID(processes []ps.Process, parentPids []int) []ps.Process {
+	filterProcessParentPid := map[int]struct{}{}
+	for _, ppid := range parentPids {
+		filterProcessParentPid[ppid] = struct{}{}
+	}
+
+	var filteredProcesses []ps.Process
 	for _, process := range processes {
-		// consider all processes that are virt-launcher children
-		if process.PPid() != launcherPid {
-			continue
+		if _, ok := filterProcessParentPid[process.PPid()]; ok {
+			filteredProcesses = append(filteredProcesses, process)
 		}
+	}
 
-		// libvirtd process sets the memory lock limit before fork/exec-ing into qemu
-		if process.Executable() != "libvirtd" {
-			continue
-		}
+	return filteredProcesses
+}
 
-		// make the best estimate for memory required by libvirt
-		memlockSize, err := getMemlockSize(vm)
-		if err != nil {
-			return err
+func filterProcessesByExecutable(processes []ps.Process, exectutables []string) []ps.Process {
+	filterProcessExectutables := map[string]struct{}{}
+	for _, exectutable := range exectutables {
+		filterProcessExectutables[exectutable] = struct{}{}
+	}
+
+	var filteredProcesses []ps.Process
+	for _, process := range processes {
+		if _, ok := filterProcessExectutables[process.Executable()]; ok {
+			filteredProcesses = append(filteredProcesses, process)
 		}
-		rLimit := unix.Rlimit{
-			Max: uint64(memlockSize),
-			Cur: uint64(memlockSize),
-		}
-		err = prLimit(process.Pid(), unix.RLIMIT_MEMLOCK, &rLimit)
+	}
+
+	return filteredProcesses
+}
+
+func adjustMemoryResourceLimit(process ps.Process, size int64) error {
+	var err error
+
+	currentResourceLimit := unix.Rlimit{}
+	err = getPrLimit(process.Pid(), unix.RLIMIT_MEMLOCK, &currentResourceLimit)
+	if err != nil {
+		return fmt.Errorf("failed to get rlimit for memory lock: %v", err)
+	}
+	log.Log.Infof("debug: adjust memlock: CURRENT process %d %s from %+v", process.Pid(), process.Executable(), currentResourceLimit)
+
+	desiredResourceLimit := unix.Rlimit{
+		Max: uint64(size),
+		Cur: uint64(size),
+	}
+	log.Log.Infof("debug: adjust memlock: CHECK process %d %s\n\tfrom %+v\n\tto %+v\n", process.Pid(), process.Executable(), currentResourceLimit, desiredResourceLimit)
+	if currentResourceLimit.Cur < desiredResourceLimit.Max {
+		err = setPrLimit(process.Pid(), unix.RLIMIT_MEMLOCK, &desiredResourceLimit)
 		if err != nil {
 			return fmt.Errorf("failed to set rlimit for memory lock: %v", err)
 		}
-		// we assume a single process should match
-		break
+		log.Log.Infof("debug: adjust memlock: CHANGED process %d %s to %+v %d", process.Pid(), process.Executable(), desiredResourceLimit, size)
 	}
+
 	return nil
 }
 
@@ -217,8 +300,8 @@ func getMemlockSize(vm *v1.VirtualMachineInstance) (int64, error) {
 	return bytes_, nil
 }
 
-func NewIsolationResult(pid int, slice string, controller []string) IsolationResult {
-	return &realIsolationResult{pid: pid, slice: slice, controller: controller}
+func NewIsolationResult(pid, ppid int, slice string, controller []string) IsolationResult {
+	return &realIsolationResult{pid: pid, ppid: ppid, slice: slice, controller: controller}
 }
 
 type IsolationResult interface {
@@ -226,6 +309,8 @@ type IsolationResult interface {
 	Slice() string
 	// process ID
 	Pid() int
+	// parent process ID
+	PPid() int
 	// full path to the process namespace
 	PIDNamespace() string
 	// full path to the process root mount
@@ -242,6 +327,7 @@ type IsolationResult interface {
 
 type realIsolationResult struct {
 	pid        int
+	ppid       int
 	slice      string
 	controller []string
 }
@@ -403,6 +489,10 @@ func (r *realIsolationResult) MountRoot() string {
 
 func (r *realIsolationResult) Pid() int {
 	return r.pid
+}
+
+func (r *realIsolationResult) PPid() int {
+	return r.ppid
 }
 
 func (r *realIsolationResult) Controller() []string {
