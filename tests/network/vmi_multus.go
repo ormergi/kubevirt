@@ -1017,7 +1017,7 @@ var _ = Describe("[Serial]SRIOV", func() {
 				Expect(checkMacAddress(vmi, interfaceName, mac)).To(Succeed(), "SR-IOV VF is expected to exist in the guest")
 			})
 
-			It("should be successful with a running VMI on the target", func() {
+			FIt("should be successful with a running VMI on the target", func() {
 				By("starting the migration")
 				migration := tests.NewRandomMigration(vmi.Name, vmi.Namespace)
 				migrationUID := tests.RunMigrationAndExpectCompletion(virtClient, migration, tests.MigrationWaitTime)
@@ -1035,7 +1035,10 @@ var _ = Describe("[Serial]SRIOV", func() {
 					return checkMacAddress(updatedVMI, interfaceName, mac)
 				}, 30*time.Second, 5*time.Second).Should(Succeed(),
 					"SR-IOV VF is expected to exist in the guest after migration")
+
+				panic("debug: TEST PASSED: inject error in order to dump atrifacts")
 			})
+
 		})
 
 	})
@@ -1284,6 +1287,8 @@ func checkMacAddress(vmi *v1.VirtualMachineInstance, interfaceName, macAddress s
 	cmdCheck := fmt.Sprintf("ip link show %s\n", interfaceName)
 	err := console.SafeExpectBatch(vmi, []expect.Batcher{
 		&expect.BSnd{S: "\n"},
+		&expect.BExp{R: console.PromptExpression},
+		&expect.BSnd{S: "ip a\n"},
 		&expect.BExp{R: console.PromptExpression},
 		&expect.BSnd{S: cmdCheck},
 		&expect.BExp{R: macAddress},

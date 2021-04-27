@@ -211,8 +211,17 @@ func SetQemuProcessMemoryLimits(podIsoDetector PodIsolationDetector, vmi *v1.Vir
 }
 
 func filterIsolatedQemuProcess(processes []ps.Process, isolationResult IsolationResult) []ps.Process {
+	log.Log.Infof("debug: filterIsolatedQemuProcess: virt-launcher pid: %d", isolationResult.Pid())
+	log.Log.Infof("debug: filterIsolatedQemuProcess: virt-launcher ppid: %d", isolationResult.PPid())
 	processes = filterProcessByPPID(processes, []int{isolationResult.Pid(), isolationResult.PPid()})
-	return filterProcessByExecutable(processes, qemuProcessExecutable)
+	for p := range processes {
+		log.Log.Infof("debug: filterIsolatedQemuProcess: found process with ppids %v, process: %+v", []int{isolationResult.Pid(), isolationResult.PPid()}, p)
+	}
+	processes = filterProcessByExecutable(processes, qemuProcessExecutable)
+	for p := range processes {
+		log.Log.Infof("debug: filterIsolatedQemuProcess: found qmeu process: %+v", p)
+	}
+	return processes
 }
 
 //adjustIsolatedProcessMemoryLimits adjusts the given processes memory
