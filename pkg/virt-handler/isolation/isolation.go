@@ -88,6 +88,7 @@ type socketBasedIsolationDetector struct {
 
 func (s *socketBasedIsolationDetector) DetectForSocket(vm *v1.VirtualMachineInstance, socket string) (IsolationResult, error) {
 	var pid int
+	var ppid int
 	var slice string
 	var err error
 	var controller []string
@@ -98,13 +99,19 @@ func (s *socketBasedIsolationDetector) DetectForSocket(vm *v1.VirtualMachineInst
 
 	}
 
+	process, err := ps.FindProcess(pid)
+	if err != nil {
+		return nil, err
+	}
+	ppid = process.PPid()
+
 	// Look up the cgroup slice based on the whitelisted controller
 	if controller, slice, err = s.getSlice(pid); err != nil {
 		log.Log.Object(vm).Reason(err).Errorf("Could not get cgroup slice for Pid %d", pid)
 		return nil, err
 	}
 
-	return NewIsolationResult(pid, slice, controller), nil
+	return NewIsolationResult(pid, ppid, slice, controller), nil
 }
 
 // NewSocketBasedIsolationDetector takes socketDir and creates a socket based IsolationDetector
@@ -219,8 +226,8 @@ func setProcessMemoryLockRLimit(pid int, currentLimit, maxLimit uint64) error {
 	return nil
 }
 
-func NewIsolationResult(pid int, slice string, controller []string) IsolationResult {
-	return &realIsolationResult{pid: pid, slice: slice, controller: controller}
+func NewIsolationResult(pid, ppid int, slice string, controller []string) IsolationResult {
+	return &realIsolationResult{pid: pid, ppid: ppid, slice: slice, controller: controller}
 }
 
 type IsolationResult interface {
@@ -228,6 +235,8 @@ type IsolationResult interface {
 	Slice() string
 	// process ID
 	Pid() int
+	// parent process ID
+	PPid() int
 	// full path to the process namespace
 	PIDNamespace() string
 	// full path to the process root mount
@@ -244,6 +253,7 @@ type IsolationResult interface {
 
 type realIsolationResult struct {
 	pid        int
+	ppid       int
 	slice      string
 	controller []string
 }
@@ -405,6 +415,10 @@ func (r *realIsolationResult) MountRoot() string {
 
 func (r *realIsolationResult) Pid() int {
 	return r.pid
+}
+
+func (r *realIsolationResult) PPid() int {
+	return r.ppid
 }
 
 func (r *realIsolationResult) Controller() []string {
