@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/golang/mock/gomock"
+	"github.com/mitchellh/go-ps"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -186,5 +187,24 @@ var _ = Describe("getMemlockSize", func() {
 		Expect(err).ToNot(HaveOccurred())
 		// 1Gb (static part for vfio VMs) + 256Mb (estimated overhead) + 8 Mb (VM)
 		Expect(int(bytes_)).To(Equal(1264389000))
+	})
+})
+
+var _ = Describe("findIsolatedQemuProcess", func() {
+	It("should return the QEMU process", func() {
+		virtLauncherPid := 1
+		virtLauncherProc := ProcessStub{pid: virtLauncherPid, ppid: 0, binary: "virt-launcher"}
+		virtLauncherForkedProc := ProcessStub{pid: 26, ppid: 1, binary: "virt-launcher --no-fork true"}
+		libvirtdProc := ProcessStub{pid: 226, ppid: 26, binary: "libvirtd"}
+		qemuProc := ProcessStub{pid: 101, ppid: 1, binary: qemuProcessExecutable}
+		virtLauncherProcesses := []ps.Process{
+			virtLauncherProc,
+			qemuProc,
+			virtLauncherForkedProc,
+			libvirtdProc,
+		}
+
+		Expect(findIsolatedQemuProcess(virtLauncherProcesses, virtLauncherPid)).
+			To(Equal(qemuProc))
 	})
 })

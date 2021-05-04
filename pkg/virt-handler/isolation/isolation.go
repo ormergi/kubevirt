@@ -204,6 +204,51 @@ func (s *socketBasedIsolationDetector) AdjustResources(vm *v1.VirtualMachineInst
 	return nil
 }
 
+const qemuProcessExecutable = "qemu-kvm"
+
+// AdjustQemuProcessMemoryLimits adjusts QEMU process MEMLOCK rlimits that runs inside
+// virt-launcher pod on the given VMI according to its spec.
+// Only VMI's with VFIO devices (e.g: SRIOV, GPU) require QEMU process MEMLOCK adjustment.
+func AdjustQemuProcessMemoryLimits(podIsoDetector PodIsolationDetector, vmi *v1.VirtualMachineInstance) error {
+	if !util.IsVFIOVMI(vmi) {
+		return nil
+	}
+
+	isolationResult, err := podIsoDetector.Detect(vmi)
+	if err != nil {
+		return err
+	}
+
+	processes, err := ps.Processes()
+	if err != nil {
+		return fmt.Errorf("failed to get all processes: %v", err)
+	}
+	qemuProcess := findIsolatedQemuProcess(processes, isolationResult.PPid())
+	if qemuProcess == nil {
+		return fmt.Errorf("QEMU process not found")
+	}
+	qemuProcessPid := qemuProcess.Pid()
+
+	memlockSize, err := getMemlockSize(vmi)
+	if err != nil {
+		return err
+	}
+
+	if err := setProcessMemoryLockRLimit(qemuProcessPid, memlockSize); err != nil {
+		return fmt.Errorf("failed to set process %d memlock rlimit to %d: %v", qemuProcessPid, memlockSize, err)
+	}
+	log.Log.V(5).Object(vmi).Infof("set process %+v memlock rlimits to: Cur: %d Max:%d",
+		qemuProcess, memlockSize, memlockSize)
+
+	return nil
+}
+
+// findIsolatedQemuProcess Returns the first occurrence of the QEMU process whose parent is PID"
+func findIsolatedQemuProcess(processes []ps.Process, pid int) ps.Process {
+	processes = childProcesses(processes, pid)
+	return lookupProcessByExecutable(processes, qemuProcessExecutable)
+}
+
 // consider reusing getMemoryOverhead()
 // This is not scientific, but neither what libvirtd does is. See details in:
 // https://www.redhat.com/archives/libvirt-users/2019-August/msg00051.html
