@@ -2643,8 +2643,12 @@ func (d *VirtualMachineController) finalizeMigration(vmi *v1.VirtualMachineInsta
 	if err != nil {
 		return err
 	}
-	err = client.FinalizeVirtualMachineMigration(vmi)
-	if err != nil {
+
+	if err := isolation.SetQemuProcessMemoryLimits(d.podIsolationDetector, vmi); err != nil {
+		log.Log.Object(vmi).Reason(err).Warning("failed to adjust QEMU process memory limits")
+	}
+
+	if err := client.FinalizeVirtualMachineMigration(vmi); err != nil {
 		log.Log.Object(vmi).Reason(err).Error("failed to finalize migration")
 		return err
 	}

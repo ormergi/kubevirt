@@ -176,6 +176,59 @@ var _ = Describe("Isolation", func() {
 			ctrl.Finish()
 		})
 	})
+
+	Context("VM with VFIO device", func() {
+		vmi := newMinimalVMIWithSingleSRIOVIface("testvmi", "sriov1")
+
+		Context("Should set QMEU process memory limits successfully", func() {
+			var ctrl *gomock.Controller
+			var podIsoDetector *MockPodIsolationDetector
+			var isolationResult *MockIsolationResult
+
+			virtLauncherForkedPid := 26
+			virtLauncherForkedPPid := 1
+			forkedVirtLauncherProcesses := newPsGoProcess([]ProcessStub{
+				{pid: virtLauncherForkedPPid, ppid: 0, binary: "virt-launcher --no-fork false"},
+				{pid: virtLauncherForkedPid, ppid: virtLauncherForkedPPid, binary: "virt-launcher --no-fork true"},
+				{pid: 226, ppid: virtLauncherForkedPid, binary: libvirtProcessExecutable},
+				{pid: 101, ppid: virtLauncherForkedPPid, binary: qemuProcessExecutable},
+			})
+
+			virtLauncherPid := 1
+			virtLauncherPPid := 0
+			virtLauncherProcesses := newPsGoProcess([]ProcessStub{
+				{pid: virtLauncherPid, ppid: virtLauncherPPid, binary: "virt-launcher --no-fork false"},
+				{pid: 101, ppid: virtLauncherPid, binary: libvirtProcessExecutable},
+				{pid: 102, ppid: virtLauncherPid, binary: qemuProcessExecutable},
+			})
+
+			BeforeEach(func() {
+				ctrl = gomock.NewController(GinkgoT())
+				podIsoDetector = NewMockPodIsolationDetector(ctrl)
+				isolationResult = NewMockIsolationResult(ctrl)
+			})
+
+			It("when virt-launcher process is forked (runs with --no-fork=false)", func() {
+				isolationResult.EXPECT().Pid().Return(virtLauncherForkedPid).AnyTimes()
+				isolationResult.EXPECT().PPid().Return(virtLauncherForkedPPid).AnyTimes()
+				podIsoDetector.EXPECT().Detect(vmi).Return(isolationResult, nil).AnyTimes()
+
+				processes := filterIsolatedQemuProcess(forkedVirtLauncherProcesses, isolationResult)
+
+				Expect(adjustIsolatedProcessMemoryLimits(vmi, processes, setProcessMemoryLimitsStub)).To(Succeed())
+			})
+
+			It("when virt-launcher process is not forked (runs with --no-fork=true)", func() {
+				isolationResult.EXPECT().Pid().Return(virtLauncherPid).AnyTimes()
+				isolationResult.EXPECT().PPid().Return(virtLauncherPPid).AnyTimes()
+				podIsoDetector.EXPECT().Detect(vmi).Return(isolationResult, nil).AnyTimes()
+
+				processes := filterIsolatedQemuProcess(virtLauncherProcesses, isolationResult)
+
+				Expect(adjustIsolatedProcessMemoryLimits(vmi, processes, setProcessMemoryLimitsStub)).To(Succeed())
+			})
+		})
+	})
 })
 
 var _ = Describe("getMemlockSize", func() {
@@ -188,3 +241,18 @@ var _ = Describe("getMemlockSize", func() {
 		Expect(int(bytes_)).To(Equal(1264389000))
 	})
 })
+
+func newMinimalVMIWithSingleSRIOVIface(name, sriovDeviceName string) *v1.VirtualMachineInstance {
+	sriovNetwork := v1.Network{NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: sriovDeviceName}}}
+	sriovIface := v1.Interface{Name: sriovDeviceName, InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}
+
+	vmi := v1.NewMinimalVMIWithNS("default", name)
+	vmi.Spec.Networks = append(vmi.Spec.Networks, sriovNetwork)
+	vmi.Spec.Domain.Devices.Interfaces = append(vmi.Spec.Domain.Devices.Interfaces, sriovIface)
+
+	return vmi
+}
+
+func setProcessMemoryLimitsStub(pid int, max, current uint64) error {
+	return nil
+}

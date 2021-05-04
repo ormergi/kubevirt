@@ -67,7 +67,11 @@ type PodIsolationDetector interface {
 	AdjustResources(vm *v1.VirtualMachineInstance) error
 }
 
-const isolationDialTimeout = 5
+const (
+	isolationDialTimeout     = 5
+	libvirtProcessExecutable = "libvirtd"
+	qemuProcessExecutable    = "qemu-kvm"
+)
 
 type MountInfo struct {
 	DeviceContainingFile string
@@ -181,6 +185,56 @@ func (s *socketBasedIsolationDetector) AdjustResources(vm *v1.VirtualMachineInst
 		// we assume a single process should match
 		break
 	}
+	return nil
+}
+
+// SetQemuProcessMemoryLimits adjusts QMEU process memory locked rlimits
+// on the VM virt-launcher pod, according to VMI spec
+func SetQemuProcessMemoryLimits(podIsoDetector PodIsolationDetector, vmi *v1.VirtualMachineInstance) error {
+	// only VFIO attached domains require QEMU process MEMLOCK adjustment
+	if !util.IsVFIOVMI(vmi) {
+		return nil
+	}
+
+	processes, err := ps.Processes()
+	if err != nil {
+		return fmt.Errorf("failed to get all processes: %v", err)
+	}
+
+	isolationResult, err := podIsoDetector.Detect(vmi)
+	if err != nil {
+		return err
+	}
+
+	processes = filterIsolatedQemuProcess(processes, isolationResult)
+	return adjustIsolatedProcessMemoryLimits(vmi, processes, setProcessMemoryLockRLimit)
+}
+
+func filterIsolatedQemuProcess(processes []ps.Process, isolationResult IsolationResult) []ps.Process {
+	processes = filterProcessByPPID(processes, []int{isolationResult.Pid(), isolationResult.PPid()})
+	return filterProcessByExecutable(processes, qemuProcessExecutable)
+}
+
+//adjustIsolatedProcessMemoryLimits adjusts the given processes memory
+// locked limits according to the given VMI spec
+func adjustIsolatedProcessMemoryLimits(vmi *v1.VirtualMachineInstance,
+	processes []ps.Process,
+	setProcessMemoryLimitsFn func(pid int, current uint64, max uint64) error) error {
+
+	memlockSize, err := getMemlockSize(vmi)
+	if err != nil {
+		return err
+	}
+
+	for _, process := range processes {
+		err = setProcessMemoryLimitsFn(process.Pid(), uint64(memlockSize), uint64(memlockSize))
+		if err != nil {
+			return fmt.Errorf("failed to set rlimit for memory lock: %v", err)
+		}
+		log.Log.V(3).Object(vmi).Infof("%s process memory limits changed to: Max:%d Cur: %d",
+			process.Executable(), memlockSize, memlockSize)
+	}
+
 	return nil
 }
 
