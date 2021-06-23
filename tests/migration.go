@@ -172,3 +172,23 @@ func RunStressTest(vmi *v1.VirtualMachineInstance, vmsize, stressTimeoutSeconds 
 		time.Sleep(15 * time.Second)
 	}
 }
+
+func ExpectMigrationPhaseRunning(virtClient kubecli.KubevirtClient, migration *v1.VirtualMachineInstanceMigration, vmi *v1.VirtualMachineInstance, timeout int) {
+	Eventually(func() bool {
+		migration, err := virtClient.VirtualMachineInstanceMigration(migration.Namespace).Get(migration.Name, &metav1.GetOptions{})
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(migration.Status.Phase).To(SatisfyAll(
+			Not(Equal(v1.MigrationFailed)),
+			Not(Equal(v1.MigrationSucceeded))))
+
+		if migration.Status.Phase == v1.MigrationRunning {
+			vmi, err = virtClient.VirtualMachineInstance(vmi.Namespace).Get(vmi.Name, &metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			return vmi.Status.MigrationState != nil &&
+				vmi.Status.MigrationState.Completed != true
+		}
+
+		return false
+	}, timeout, 1*time.Second).Should(BeTrue())
+}
