@@ -1758,12 +1758,10 @@ var _ = Describe("Manager", func() {
 		xml, err := xml.MarshalIndent(domainSpec, "", "\t")
 		Expect(err).NotTo(HaveOccurred())
 
-		mockDomain.EXPECT().Free()
-		mockConn.EXPECT().LookupDomainByName(testDomainName).Return(mockDomain, nil)
 		mockDomain.EXPECT().GetXMLDesc(libvirt.DomainXMLFlags(0)).Return(string(xml), nil)
 		mockDomain.EXPECT().AttachDeviceFlags(`<hostdev type="pci" managed="no"><source><address type="pci" domain="0x05EA" bus="0xFc" slot="0x1d" function="0x6"></address></source><alias name="ua-sriov-test1"></alias></hostdev>`, libvirt.DomainDeviceModifyFlags(3)).Return(nil)
 
-		err = libvirtmanager.hotPlugHostDevices(vmi)
+		err = libvirtmanager.hotPlugHostDevices(vmi, mockDomain)
 		Expect(err).ToNot(HaveOccurred())
 	})
 
