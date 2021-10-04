@@ -53,6 +53,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	batchv1 "k8s.io/api/batch/v1"
 	k8sv1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -464,8 +465,59 @@ func SynchronizedAfterTestSuiteCleanup() {
 		deleteStorageClass(Config.StorageClassBlockVolume)
 		deleteStorageClass(Config.StorageClassHostPathSeparateDevice)
 	}
+
+	deleteTestsLinuxBridge()
+
 	CleanNodes()
 }
+
+// deleteTestsLinuxBridge deletes the linux bridge that been created by Multus tests suite from each node
+func deleteTestsLinuxBridge() error {
+	virtClient, err := kubecli.GetKubevirtClient()
+	if err != nil {
+		return err
+	}
+
+	nodes, err := virtClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	// for each node we create a job that will delete the given linux-bridge
+	jobs := []*batchv1.Job{}
+	for _, node := range nodes.Items {
+		jobs = append(jobs, NewDeleteNodeLinuxBridgeJob(libnet.TestLinuxBridgeName, node.Name))
+	}
+
+	errs := []error{}
+	for _, job := range jobs {
+		_, err = virtClient.BatchV1().Jobs(job.Namespace).Create(context.Background(), job, metav1.CreateOptions{})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+	}
+
+	for _, job := range jobs {
+		if err := WaitForJobToSucceed(job, time.Duration(60)*time.Second); err != nil {
+			errs = append(errs, err)
+		}
+		if err := virtClient.BatchV1().Jobs(job.Namespace).Delete(context.Background(), job.Name, metav1.DeleteOptions{}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		errorMessageBuilder := strings.Builder{}
+		for _, err := range errs {
+			errorMessageBuilder.WriteString(err.Error() + "\n")
+		}
+		return fmt.Errorf(errorMessageBuilder.String())
+	}
+
+	return nil
+}
+
 
 func AfterTestSuitCleanup() {
 
@@ -476,6 +528,7 @@ func AfterTestSuitCleanup() {
 		WipeTestingInfrastructure()
 	}
 	removeNamespaces()
+
 }
 
 func BeforeTestCleanup() {

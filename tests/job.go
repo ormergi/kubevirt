@@ -148,3 +148,53 @@ func NewHelloWorldJobHTTP(host string, port string) *batchv1.Job {
 func newHelloWorldJob(checkConnectivityCmd string) *batchv1.Job {
 	return NewJob("netcat", []string{"/bin/bash", "-c"}, []string{checkConnectivityCmd}, JobRetry, JobTTL, JobTimeout)
 }
+
+func NewDeleteNodeLinuxBridgeJob(bridgeName, nodeName string) *batchv1.Job {
+	hostMountPath := "/host"
+
+	command := composeChrootDeleteIfaceIfExistCommand(hostMountPath, bridgeName)
+	job := NewJob("tests-linux-bridge-teardown", []string{"/bin/bash", "-cx"}, []string{command}, JobRetry, 5, 10)
+
+	// mount host fs
+	hostVolName := "host"
+	hostVolume := *getHostPathVolume(hostVolName, "/")
+	hostVolumeMount := k8sv1.VolumeMount{Name: hostVolName, MountPath: hostMountPath}
+	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, hostVolume)
+	job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, hostVolumeMount)
+
+	job.Spec.Template.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": nodeName}
+	job.Spec.Template.Spec.HostNetwork = true
+	job.Spec.Template.Spec.Containers[0].SecurityContext = getPrivilegedRunAs0SecurityContext()
+	job.Spec.Template.Namespace = metav1.NamespaceSystem
+	job.Namespace = metav1.NamespaceSystem
+
+	return job
+}
+
+func composeChrootDeleteIfaceIfExistCommand(path, iface string) string {
+	chrootIpLinkShowDev := fmt.Sprintf("chroot %s ip link show dev %s ", path, iface)
+	chrootIplinkDeleteDev := fmt.Sprintf("chroot %s ip link del dev %s", path, iface)
+	deleteIfaceIfExistsCmd := fmt.Sprintf("%s && %s || true", chrootIpLinkShowDev, chrootIplinkDeleteDev)
+
+	return deleteIfaceIfExistsCmd
+}
+
+func getHostPathVolume(name, path string) *k8sv1.Volume {
+	return &k8sv1.Volume{
+		Name: name,
+		VolumeSource: k8sv1.VolumeSource{
+			HostPath: &k8sv1.HostPathVolumeSource{
+				Path: path,
+			},
+		},
+	}
+}
+
+func getPrivilegedRunAs0SecurityContext() *k8sv1.SecurityContext {
+	privileged := true
+	runAsUserZero := int64(0)
+	return &k8sv1.SecurityContext{
+		Privileged: &privileged,
+		RunAsUser:  &runAsUserZero,
+	}
+}
