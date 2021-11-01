@@ -1723,7 +1723,7 @@ var _ = Describe("Manager", func() {
 		})
 	})
 
-	It("executes hotPlugHostDevices", func() {
+	FIt("executes hotPlugHostDevices", func() {
 		os.Setenv("KUBEVIRT_RESOURCE_NAME_test1", "127.0.0.1")
 		os.Setenv("PCIDEVICE_127_0_0_1", "05EA:Fc:1d.6")
 

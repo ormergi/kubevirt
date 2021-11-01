@@ -103,6 +103,7 @@ type DomainManager interface {
 	GetUsers() ([]v1.VirtualMachineInstanceGuestOSUser, error)
 	GetFilesystems() ([]v1.VirtualMachineInstanceFileSystem, error)
 	FinalizeVirtualMachineMigration(*v1.VirtualMachineInstance) error
+	HotplugHostDevices(vmi *v1.VirtualMachineInstance) error
 	InterfacesStatus(domainInterfaces []api.Interface) []api.InterfaceStatus
 	GetGuestOSInfo() *api.GuestOSInfo
 	Exec(string, string, []string, int32) (string, error)
@@ -117,6 +118,9 @@ type LibvirtDomainManager struct {
 	// mutex to control access to the guest time context
 	setGuestTimeLock sync.Mutex
 
+	hotplugHostdevLock         sync.Mutex
+	hotplugHostdevsAttachRelax bool
+
 	credManager *accesscredentials.AccessCredentialManager
 
 	virtShareDir             string
@@ -130,6 +134,8 @@ type LibvirtDomainManager struct {
 	ephemeralDiskCreator     ephemeraldisk.EphemeralDiskCreatorInterface
 	directIOChecker          converter.DirectIOChecker
 	disksInfo                map[string]*cmdv1.DiskInfo
+
+	hotplugHostdevInProgressChan chan bool
 }
 
 type pausedVMIs struct {
@@ -167,12 +173,13 @@ func newLibvirtDomainManager(connection cli.Connection, virtShareDir string, age
 		paused: pausedVMIs{
 			paused: make(map[types.UID]bool, 0),
 		},
-		agentData:                agentStore,
-		efiEnvironment:           efi.DetectEFIEnvironment(runtime.GOARCH, ovmfPath),
-		networkCacheStoreFactory: cache.NewInterfaceCacheFactory(),
-		ephemeralDiskCreator:     ephemeralDiskCreator,
-		directIOChecker:          directIOChecker,
-		disksInfo:                map[string]*cmdv1.DiskInfo{},
+		agentData:                    agentStore,
+		efiEnvironment:               efi.DetectEFIEnvironment(runtime.GOARCH, ovmfPath),
+		networkCacheStoreFactory:     cache.NewInterfaceCacheFactory(),
+		ephemeralDiskCreator:         ephemeralDiskCreator,
+		directIOChecker:              directIOChecker,
+		disksInfo:                    map[string]*cmdv1.DiskInfo{},
+		hotplugHostdevInProgressChan: make(chan bool, 1),
 	}
 	manager.credManager = accesscredentials.NewManager(connection, &manager.domainModifyLock)
 
@@ -297,9 +304,35 @@ func (l *LibvirtDomainManager) FinalizeVirtualMachineMigration(vmi *v1.VirtualMa
 	return l.finalizeMigrationTarget(vmi)
 }
 
-// hotPlugHostDevices attach host-devices to running domain
+// HotplugHostDevices attach host-devices to running domain
 // Currently only SRIOV host-devices are supported
-func (l *LibvirtDomainManager) hotPlugHostDevices(vmi *v1.VirtualMachineInstance, domain cli.VirDomain) error {
+func (l *LibvirtDomainManager) HotplugHostDevices(vmi *v1.VirtualMachineInstance) error {
+	l.domainModifyLock.Lock()
+	defer l.domainModifyLock.Unlock()
+	/*
+		domain1, err := l.virConn.LookupDomainByName(api.VMINamespaceKeyFunc(vmi))
+		if err != nil {
+			if domainerrors.IsNotFound(err) {
+				return nil
+			} else {
+				log.Log.Object(vmi).Reason(err).Error("Getting the domain failed.")
+				return err
+			}
+		}
+		domain1.Free()
+	*/
+	domain, err := l.virConn.LookupDomainByName(api.VMINamespaceKeyFunc(vmi))
+	if err != nil {
+		if domainerrors.IsNotFound(err) {
+			return nil
+		} else {
+			log.Log.Object(vmi).Reason(err).Error("Getting the domain failed.")
+			return err
+		}
+	}
+	defer domain.Free()
+
+	// domain = domain1
 	domainSpec, err := util.GetDomainSpecWithFlags(domain, 0)
 	if err != nil {
 		return err
@@ -751,9 +784,12 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 		// Nothing to do
 	}
 
-	if err := l.hotPlugHostDevices(vmi, dom); err != nil {
-		log.Log.Object(vmi).Reason(err).Error("failed to hot-plug host-devices")
-	}
+	//if err := l.HotPlugHostDevices(vmi); err != nil {
+	//	log.Log.Object(vmi).Reason(err).Error("failed to hot-plug host-devices")
+	//}
+
+	// backoff loginc on virt-launcher, mutex/channels impl
+	// l.asyncHotPlugHostDevices(vmi, dom, l.hotplugHostdevInProgressChan)
 
 	xmlstr, err := dom.GetXMLDesc(0)
 	if err != nil {
@@ -805,6 +841,107 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 
 	// TODO: check if VirtualMachineInstance Spec and Domain Spec are equal or if we have to sync
 	return &oldSpec, nil
+}
+
+//mutex
+/*
+func (l *LibvirtDomainManager) asyncHotPlugHostDevices(vmi *v1.VirtualMachineInstance, dom cli.VirDomain, hotplugInProgress chan bool) {
+	if l.hotplugHostdevsAttachRelax {
+		return
+	}
+
+	//	backoff := []time.Duration{3 * time.Second, 30 * time.Second, 3 * time.Minute, 5 * time.Minute, 10 * time.Minute}
+	backoff := []time.Duration{1 * time.Second, 3 * time.Second, 4 * time.Second}
+
+	hotPlugFailedErr := "failed to hot-plug host-devices"
+	/*
+		dom, err := l.virConn.LookupDomainByName(api.VMINamespaceKeyFunc(vmi))
+		if err != nil {
+			log.Log.Object(vmi).Reason(err).Warning(hotPlugFailedErr)
+			return
+		}
+
+	go func() {
+		defer dom.Free()
+
+		l.hotplugHostdevLock.Lock()
+		defer l.hotplugHostdevLock.Unlock()
+
+		var err error
+		for _, waitDuration := range backoff {
+			err = hotPlugHostDevices(vmi, dom)
+			if err != nil {
+				log.Log.V(5).Object(vmi).Reason(err).
+					Errorf("%s, will try again in %s", hotPlugFailedErr, waitDuration.String())
+				time.Sleep(waitDuration)
+			} else {
+				// hotplug succeed
+				break
+			}
+		}
+		if err != nil {
+			log.Log.Object(vmi).Reason(err).Error(hotPlugFailedErr)
+		}
+
+		l.hotplugHostdevsAttachRelax = true
+		return
+	}()
+}
+*/
+
+// channels
+/*
+func asyncHotPlugHostDevices(vmi *v1.VirtualMachineInstance, dom cli.VirDomain, hotplugInProgress chan bool) {
+	//	backoff := []time.Duration{3 * time.Second, 30 * time.Second, 3 * time.Minute, 5 * time.Minute, 10 * time.Minute}
+	backoff := []time.Duration{1 * time.Second, 3 * time.Second, 4 * time.Second}
+
+	hotPlugFailedErr := "failed to hot-plug host-devices"
+	/*
+		dom, err := l.virConn.LookupDomainByName(api.VMINamespaceKeyFunc(vmi))
+		if err != nil {
+			log.Log.Object(vmi).Reason(err).Warning(hotPlugFailedErr)
+			return
+		}
+
+	go func() {
+		defer dom.Free()
+
+		hotplugInProgress <- true
+		defer func() { <-hotplugInProgress }()
+
+		var err error
+		for _, waitDuration := range backoff {
+			err = hotPlugHostDevices(vmi, dom)
+			if err != nil {
+				log.Log.V(5).Object(vmi).Reason(err).
+					Errorf("%s, will try again in %s", hotPlugFailedErr, waitDuration.String())
+				time.Sleep(waitDuration)
+			} else {
+				// hotplug succeed
+				break
+			}
+		}
+		if err != nil {
+			log.Log.Object(vmi).Reason(err).Error(hotPlugFailedErr)
+		}
+
+		return
+	}()
+}
+*/
+
+func retryWithBackoff(backoff []time.Duration, fn func() error) error {
+	var err error
+	for _, waitDuration := range backoff {
+		err = fn()
+		if err != nil {
+			time.Sleep(waitDuration)
+		} else {
+			return nil
+		}
+	}
+
+	return err
 }
 
 func getSourceFile(disk api.Disk) string {

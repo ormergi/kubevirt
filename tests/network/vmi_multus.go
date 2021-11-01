@@ -1070,7 +1070,7 @@ var _ = Describe("[Serial]SRIOV", func() {
 			})
 		})
 
-		Context("migration", func() {
+		FContext("migration", func() {
 
 			BeforeEach(func() {
 				if err := validateSRIOVSetup(virtClient, sriovResourceName, 2); err != nil {
@@ -1133,6 +1133,7 @@ var _ = Describe("[Serial]SRIOV", func() {
 					return checkMacAddress(updatedVMI, interfaceName, mac)
 				}, 30*time.Second, 5*time.Second).Should(Succeed(),
 					"SR-IOV VF is expected to exist in the guest after migration")
+				Expect(1).To(BeNumerically("==", 2), "DEBUG: DUMP ARTIFACTS")
 			})
 		})
 

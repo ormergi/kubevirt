@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"kubevirt.io/kubevirt/pkg/config"
+	"kubevirt.io/kubevirt/pkg/virt-handler/backoff"
 
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 
@@ -158,27 +159,28 @@ func NewController(
 	queue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "virt-handler-vm")
 
 	c := &VirtualMachineController{
-		Queue:                       queue,
-		recorder:                    recorder,
-		clientset:                   clientset,
-		host:                        host,
-		ipAddress:                   ipAddress,
-		virtShareDir:                virtShareDir,
-		vmiSourceInformer:           vmiSourceInformer,
-		vmiTargetInformer:           vmiTargetInformer,
-		domainInformer:              domainInformer,
-		gracefulShutdownInformer:    gracefulShutdownInformer,
-		heartBeatInterval:           1 * time.Minute,
-		watchdogTimeoutSeconds:      watchdogTimeoutSeconds,
-		migrationProxy:              migrationProxy,
-		podIsolationDetector:        podIsolationDetector,
-		containerDiskMounter:        container_disk.NewMounter(podIsolationDetector, virtPrivateDir+"/container-disk-mount-state", clusterConfig),
-		hotplugVolumeMounter:        hotplug_volume.NewVolumeMounter(podIsolationDetector, virtPrivateDir+"/hotplug-volume-mount-state"),
-		clusterConfig:               clusterConfig,
-		networkCacheStoreFactory:    netcache.NewInterfaceCacheFactory(),
-		virtLauncherFSRunDirPattern: "/proc/%d/root/var/run",
-		capabilities:                capabilities,
-		vmiExpectations:             controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
+		Queue:                          queue,
+		recorder:                       recorder,
+		clientset:                      clientset,
+		host:                           host,
+		ipAddress:                      ipAddress,
+		virtShareDir:                   virtShareDir,
+		vmiSourceInformer:              vmiSourceInformer,
+		vmiTargetInformer:              vmiTargetInformer,
+		domainInformer:                 domainInformer,
+		gracefulShutdownInformer:       gracefulShutdownInformer,
+		heartBeatInterval:              1 * time.Minute,
+		watchdogTimeoutSeconds:         watchdogTimeoutSeconds,
+		migrationProxy:                 migrationProxy,
+		podIsolationDetector:           podIsolationDetector,
+		containerDiskMounter:           container_disk.NewMounter(podIsolationDetector, virtPrivateDir+"/container-disk-mount-state", clusterConfig),
+		hotplugVolumeMounter:           hotplug_volume.NewVolumeMounter(podIsolationDetector, virtPrivateDir+"/hotplug-volume-mount-state"),
+		clusterConfig:                  clusterConfig,
+		networkCacheStoreFactory:       netcache.NewInterfaceCacheFactory(),
+		virtLauncherFSRunDirPattern:    "/proc/%d/root/var/run",
+		capabilities:                   capabilities,
+		vmiExpectations:                controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
+		hotplugHostdevBackoffExecutors: map[string]backoff.BackoffExecutor{},
 	}
 
 	vmiSourceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -267,6 +269,8 @@ type VirtualMachineController struct {
 	heartBeat                   *heartbeat.HeartBeat
 	capabilities                *nodelabellerapi.Capabilities
 	vmiExpectations             *controller.UIDTrackingControllerExpectations
+
+	hotplugHostdevBackoffExecutors map[string]backoff.BackoffExecutor
 }
 
 type virtLauncherCriticalNetworkError struct {
@@ -2686,6 +2690,10 @@ func (d *VirtualMachineController) vmUpdateHelperDefault(origVMI *v1.VirtualMach
 		if err != nil {
 			return fmt.Errorf("failed to adjust resources: %v", err)
 		}
+
+		if err := d.initVmiHotplugHostdevBackoffSchedule(vmi); err != nil {
+			return err
+		}
 	} else if vmi.IsRunning() {
 		if err := isolation.AdjustQemuProcessMemoryLimits(d.podIsolationDetector, vmi); err != nil {
 			d.recorder.Event(vmi, k8sv1.EventTypeWarning, err.Error(), err.Error())
@@ -2693,6 +2701,10 @@ func (d *VirtualMachineController) vmUpdateHelperDefault(origVMI *v1.VirtualMach
 
 		if err := d.hotplugVolumeMounter.Mount(vmi); err != nil {
 			return err
+		}
+
+		if hotplugHostdev, ok := d.hotplugHostdevBackoffExecutors[api.VMINamespaceKeyFunc(vmi)]; ok {
+			hotplugHostdev.Exec()
 		}
 	}
 
@@ -2949,6 +2961,30 @@ func (d *VirtualMachineController) claimDeviceOwnership(vmi *v1.VirtualMachineIn
 	}
 
 	return diskutils.DefaultOwnershipManager.SetFileOwnership(kvmPath)
+}
+
+func (d *VirtualMachineController) initVmiHotplugHostdevBackoffSchedule(vmi *v1.VirtualMachineInstance) error {
+	const errorMessage = "failed to finalize migration"
+
+	vmiKey := api.VMINamespaceKeyFunc(vmi)
+	if _, ok := d.hotplugHostdevBackoffExecutors[vmiKey]; ok {
+		return nil
+	}
+
+	client, err := d.getVerifiedLauncherClient(vmi)
+	if err != nil {
+		return err
+	}
+	hotplugHostdevFunc := func() error {
+		if err := client.HotplugHostDevices(vmi); err != nil {
+			log.Log.Object(vmi).Reason(err).Error(errorMessage)
+			return err
+		}
+		return nil
+	}
+	backoffRetrySchedule := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	d.hotplugHostdevBackoffExecutors[vmiKey] = *backoff.NewBackoffExecutor(hotplugHostdevFunc, backoffRetrySchedule)
+	return nil
 }
 
 func nodeHasHostModelLabel(node *k8sv1.Node) bool {
