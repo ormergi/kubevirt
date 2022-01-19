@@ -329,19 +329,33 @@ func (l *LibvirtDomainManager) FinalizeVirtualMachineMigration(vmi *v1.VirtualMa
 // HotplugHostDevices attach host-devices to running domain, currently only SRIOV host-devices are supported.
 // This operation runs in the background, only one hotplug operation can occur at a time.
 func (l *LibvirtDomainManager) HotplugHostDevices(vmi *v1.VirtualMachineInstance) error {
+	log.Log.Infof("DEBUG: LibvirtDomainManager: HotplugHostDevices: start")
 	select {
 	case l.hotplugHostDevicesInProgress <- struct{}{}:
 	default:
+		log.Log.Infof("DEBUG: HotplugHostDevices: hotplugHostDevicesInProgress channel is blocking, len: %d, max: %d",
+			len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
 		return fmt.Errorf("hot-plug host-devices is in progress")
 	}
+	log.Log.Infof("DEBUG: HotplugHostDevices: hotplugHostDevicesInProgress channel is not blocking, len: %d, max: %d",
+		len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
 
 	go func() {
-		defer func() { <-l.hotplugHostDevicesInProgress }()
+		defer func() {
+			log.Log.Infof("DEBUG: HotplugHostDevices: before remove element from hotplugHostDevicesInProgress channel, len: %d, max: %d",
+				len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+			<-l.hotplugHostDevicesInProgress
+			log.Log.Infof("DEBUG: HotplugHostDevices: after remove element from hotplugHostDevicesInProgress channel, len: %d, max: %d",
+				len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+		}()
+		log.Log.Infof("DEBUG: HotplugHostDevices: goroutine: start")
 
 		if err := l.hotPlugHostDevices(vmi); err != nil {
 			log.Log.Object(vmi).Error(err.Error())
 		}
+		log.Log.Infof("DEBUG: HotplugHostDevices: goroutine: finish")
 	}()
+
 	return nil
 }
 
