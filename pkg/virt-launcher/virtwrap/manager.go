@@ -334,19 +334,19 @@ func (l *LibvirtDomainManager) HotplugHostDevices(vmi *v1.VirtualMachineInstance
 	case l.hotplugHostDevicesInProgress <- struct{}{}:
 	default:
 		log.Log.Infof("DEBUG: HotplugHostDevices: hotplugHostDevicesInProgress channel is blocking, len: %d, max: %d",
-			len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+			len(l.hotplugHostDevicesInProgress), maxConcurrentHotplugHostDevices)
 		return fmt.Errorf("hot-plug host-devices is in progress")
 	}
 	log.Log.Infof("DEBUG: HotplugHostDevices: hotplugHostDevicesInProgress channel is not blocking, len: %d, max: %d",
-		len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+		len(l.hotplugHostDevicesInProgress), maxConcurrentHotplugHostDevices)
 
 	go func() {
 		defer func() {
 			log.Log.Infof("DEBUG: HotplugHostDevices: before remove element from hotplugHostDevicesInProgress channel, len: %d, max: %d",
-				len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+				len(l.hotplugHostDevicesInProgress), maxConcurrentHotplugHostDevices)
 			<-l.hotplugHostDevicesInProgress
 			log.Log.Infof("DEBUG: HotplugHostDevices: after remove element from hotplugHostDevicesInProgress channel, len: %d, max: %d",
-				len(l.hotplugHostDevicesInProgress), maxHotplugHostDevicesConcurrent)
+				len(l.hotplugHostDevicesInProgress), maxConcurrentHotplugHostDevices)
 		}()
 		log.Log.Infof("DEBUG: HotplugHostDevices: goroutine: start")
 

@@ -404,6 +404,7 @@ func (d *DomainWatcher) handleResync() {
 			continue
 		}
 
+		log.Log.Infof("DEBUG: DomainWatcher: handleResync: sending domain Modified event: domain (%v)", domain)
 		d.eventChan <- watch.Event{Type: watch.Modified, Object: domain}
 	}
 }

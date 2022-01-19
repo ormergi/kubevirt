@@ -228,7 +228,7 @@ func (n *Notifier) SendDomainEvent(event watch.Event) error {
 		return fmt.Errorf(msg)
 	}
 
-	log.Log.Infof("DEBUG: notifier: sent domain event (%v)(%v)  successfully", event.Object, event.Type)
+	log.Log.Infof("DEBUG: Notifier: sent domain event (%v)(%v)  successfully", event.Object, event.Type)
 	return nil
 }
 
@@ -295,6 +295,7 @@ func eventCallback(c cli.Connection, domain *api.Domain, libvirtEvent libvirtEve
 		now := metav1.Now()
 		domain.ObjectMeta.DeletionTimestamp = &now
 		watchEvent := watch.Event{Type: watch.Modified, Object: domain}
+		log.Log.Infof("DEBUG: Notifier: eventCallback: domain.Status.Reason = ReasonNonExistent, sending domain event (%v)", watchEvent)
 		client.SendDomainEvent(watchEvent)
 		updateEvents(watchEvent, domain, events)
 	case api.ReasonPausedIOError:
@@ -318,6 +319,7 @@ func eventCallback(c cli.Connection, domain *api.Domain, libvirtEvent libvirtEve
 				log.Log.Reason(err).Error(fmt.Sprintf("Could not send k8s event"))
 			}
 			event := watch.Event{Type: watch.Modified, Object: domain}
+			log.Log.Infof("DEBUG: Notifier: eventCallback: domain.Status.Reason = ReasonPausedIOError, sending domain event (%v)", event)
 			client.SendDomainEvent(event)
 			updateEvents(event, domain, events)
 		}
@@ -325,10 +327,12 @@ func eventCallback(c cli.Connection, domain *api.Domain, libvirtEvent libvirtEve
 		if libvirtEvent.Event != nil {
 			if libvirtEvent.Event.Event == libvirt.DOMAIN_EVENT_DEFINED && libvirt.DomainEventDefinedDetailType(libvirtEvent.Event.Detail) == libvirt.DOMAIN_EVENT_DEFINED_ADDED {
 				event := watch.Event{Type: watch.Added, Object: domain}
+				log.Log.Infof("DEBUG: Notifier: eventCallback: got libvirt event DOMAIN_EVENT_DEFINED_ADDED, sending domain event (%v)", event)
 				client.SendDomainEvent(event)
 				updateEvents(event, domain, events)
 			} else if libvirtEvent.Event.Event == libvirt.DOMAIN_EVENT_STARTED && libvirt.DomainEventStartedDetailType(libvirtEvent.Event.Detail) == libvirt.DOMAIN_EVENT_STARTED_MIGRATED {
 				event := watch.Event{Type: watch.Added, Object: domain}
+				log.Log.Infof("DEBUG: Notifier: eventCallback: got libvirt event DOMAIN_EVENT_STARTED_MIGRATED, sending domain event (%v)", event)
 				client.SendDomainEvent(event)
 				updateEvents(event, domain, events)
 			}
@@ -344,7 +348,9 @@ func eventCallback(c cli.Connection, domain *api.Domain, libvirtEvent libvirtEve
 			domain.Status.FSFreezeStatus = *fsFreezeStatus
 		}
 
-		err := client.SendDomainEvent(watch.Event{Type: watch.Modified, Object: domain})
+		eventToSend := watch.Event{Type: watch.Modified, Object: domain}
+		log.Log.Infof("DEBUG: Notifier: eventCallback: sending domain event (%v)", eventToSend)
+		err := client.SendDomainEvent(eventToSend)
 		if err != nil {
 			log.Log.Reason(err).Error("Could not send domain notify event.")
 		}
@@ -360,9 +366,11 @@ func updateEventsClosure() func(event watch.Event, domain *api.Domain, events ch
 	return func(event watch.Event, domain *api.Domain, events chan watch.Event) {
 		if event.Type == watch.Added && firstAddEvent {
 			firstAddEvent = false
+			log.Log.Infof("DEBUG: Notifier: updateEventsClosure: sending event on first added (%v)", event)
 			events <- event
 		} else if event.Type == watch.Modified && domain.ObjectMeta.DeletionTimestamp != nil && firstDeleteEvent {
 			firstDeleteEvent = false
+			log.Log.Infof("DEBUG: Notifier: updateEventsClosure: sending event on first deletion (%v)", event)
 			events <- event
 		}
 	}
@@ -410,6 +418,7 @@ func (n *Notifier) StartDomainNotifier(
 			select {
 			case event := <-eventChan:
 				domainCache = util.NewDomainFromName(event.Domain, vmi.UID)
+				log.Log.Infof("DEBUG: Notifier: monitor gorutine: before eventCallback, got event from libvirt callbacks events channel: (%+v)", event)
 				eventCallback(domainConn, domainCache, event, n, deleteNotificationSent, interfaceStatuses, guestOsInfo, vmi, fsFreezeStatus)
 				log.Log.Infof("Domain name event: %v", domainCache.Spec.Name)
 				if event.AgentEvent != nil {
@@ -426,11 +435,13 @@ func (n *Notifier) StartDomainNotifier(
 				if interfaceStatuses != nil {
 					interfaceStatuses = agentpoller.MergeAgentStatusesWithDomainData(domainCache.Spec.Devices.Interfaces, interfaceStatuses)
 				}
-
+				log.Log.Infof("DEBUG: Notifier: monitor gorutine: before eventCallback, got event from agentStore AgentUpdated channel: (%+v)", agentUpdate)
 				eventCallback(domainConn, domainCache, libvirtEvent{}, n, deleteNotificationSent,
 					interfaceStatuses, guestOsInfo, vmi, fsFreezeStatus)
 			case <-reconnectChan:
-				n.SendDomainEvent(newWatchEventError(fmt.Errorf("Libvirt reconnect, domain %s", domainName)))
+				eventToSend := newWatchEventError(fmt.Errorf("Libvirt reconnect, domain %s", domainName))
+				log.Log.Infof("DEBUG: Notifier: monitor gorutine: got event from reconnect channel, sending domain event (%+v)", eventToSend)
+				n.SendDomainEvent(eventToSend)
 			}
 		}
 	}()
