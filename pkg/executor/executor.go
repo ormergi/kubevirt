@@ -19,6 +19,12 @@
 
 package executor
 
+import (
+	"time"
+
+	"kubevirt.io/client-go/log"
+)
+
 type rateLimiter interface {
 	Step()
 	Ready() bool
@@ -40,9 +46,11 @@ func NewRateLimitedExecutor(rateLimiter rateLimiter) *RateLimitedExecutor {
 // is not blocking; rate-limiter's end time is passed and limit is not reached.
 func (c *RateLimitedExecutor) Exec(command func() error) error {
 	if !c.rateLimiter.Ready() {
+		log.Log.Infof("DEBUG: RateLimitedCommand: Exec: not ready now: (%v) ratelimiter: (%+v)", time.Now().Format(time.Stamp), c.rateLimiter)
 		return nil
 	}
 	defer c.rateLimiter.Step()
 
+	log.Log.Info("DEBUG: RateLimitedCommand: Exec: executing command")
 	return command()
 }

@@ -1805,6 +1805,7 @@ func (d *VirtualMachineController) processVmCleanup(vmi *v1.VirtualMachineInstan
 	d.teardownNetwork(vmi)
 
 	d.sriovHotplugExecutorPool.Delete(vmi.UID)
+	log.Log.Object(vmi).Infof("DEBUG: processVmCleanup: sriovHotplugExecutorPool: Delete key element: %v", vmi.UID)
 
 	// Watch dog file and command client must be the last things removed here
 	err = d.closeLauncherClient(vmi)
@@ -2578,6 +2579,8 @@ func (d *VirtualMachineController) hotplugSriovInterfaces(vmi *v1.VirtualMachine
 }
 
 func (d *VirtualMachineController) hotplugSriovInterfacesCommand(vmi *v1.VirtualMachineInstance) error {
+	log.Log.Object(vmi).Infof("DEBUG: hotplugSriovInterfacesCommand: start")
+
 	const errMsgPrefix = "failed to hot-plug SR-IOV interfaces"
 
 	client, err := d.getVerifiedLauncherClient(vmi)
