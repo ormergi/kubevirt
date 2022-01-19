@@ -1048,17 +1048,36 @@ var _ = Describe("[Serial]SRIOV", func() {
 					tests.DisableFeatureGate(virtconfig.SRIOVLiveMigrationGate)
 				})
 
+				const migrationTargetNodeEnvVarName = "KUBEVIRT_MIGRATION_TARGET_NODE"
+
+				var migrationTargetNode string
+
+				BeforeEach(func() {
+					_, exists := os.LookupEnv(migrationTargetNodeEnvVarName)
+					Expect(exists).To(BeTrue(), fmt.Sprintf("%s env var is not found", migrationTargetNodeEnvVarName))
+					migrationTargetNode = os.Getenv(migrationTargetNodeEnvVarName)
+					Expect(migrationTargetNode).ToNot(BeEmpty(), fmt.Sprintf("%s env var is empty", migrationTargetNodeEnvVarName))
+					_, err := virtClient.CoreV1().Nodes().Get(context.Background(), migrationTargetNode, v13.GetOptions{})
+					Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("could not get node with name %s", migrationTargetNode))
+				})
+
 				var vmi *v1.VirtualMachineInstance
 
 				const mac = "de:ad:00:00:be:ef"
 
 				BeforeEach(func() {
+					// ensure VM is not scheduled on the target node
+					tests.RunCommandWithNS("", tests.GetK8sCmdClient(), "cordon", migrationTargetNode)
+
 					// The SR-IOV VF MAC should be preserved on migration, therefore explicitly specify it.
 					vmi = getSriovVmi([]string{sriovnet1}, defaultCloudInitNetworkData())
 					vmi.Spec.Domain.Devices.Interfaces[1].MacAddress = mac
 
 					vmi = startVmi(vmi)
 					vmi = waitVmi(vmi)
+
+					// after VM is running make the target node schduable
+					tests.RunCommandWithNS("", tests.GetK8sCmdClient(), "uncordon", migrationTargetNode)
 
 					var interfaceName string
 
@@ -1075,7 +1094,7 @@ var _ = Describe("[Serial]SRIOV", func() {
 					Expect(checkMacAddress(vmi, interfaceName, mac)).To(Succeed(), "SR-IOV VF is expected to exist in the guest")
 				})
 
-				It("should be successful with a running VMI on the target", func() {
+				It("[sriov-migration] should be successful with a running VMI on the target", func() {
 					By("starting the migration")
 					migration := tests.NewRandomMigration(vmi.Name, vmi.Namespace)
 					migrationUID := tests.RunMigrationAndExpectCompletion(virtClient, migration, tests.MigrationWaitTime)
