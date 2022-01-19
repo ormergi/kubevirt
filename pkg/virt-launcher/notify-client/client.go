@@ -228,6 +228,7 @@ func (n *Notifier) SendDomainEvent(event watch.Event) error {
 		return fmt.Errorf(msg)
 	}
 
+	log.Log.Infof("DEBUG: notifier: sent domain event (%v)(%v)  successfully", event.Object, event.Type)
 	return nil
 }
 
@@ -285,7 +286,7 @@ func eventCallback(c cli.Connection, domain *api.Domain, libvirtEvent libvirtEve
 			// Status hasn't changed so log only in higher verbosity.
 			log.Log.V(3).Infof("kubevirt domain status: %v(%v):%v(%v)", domain.Status.Status, status, domain.Status.Reason, reason)
 		} else {
-			log.Log.Infof("kubevirt domain status: %v(%v):%v(%v)", domain.Status.Status, status, domain.Status.Reason, reason)
+			log.Log.Infof("kubevirt domain status CHANGED: %v(%v):%v(%v)", domain.Status.Status, status, domain.Status.Reason, reason)
 		}
 	}
 
@@ -448,7 +449,7 @@ func (n *Notifier) StartDomainNotifier(
 	}
 
 	domainEventDeviceAddedCallback := func(c *libvirt.Connect, d *libvirt.Domain, event *libvirt.DomainEventDeviceAdded) {
-		log.Log.Infof("Domain Device Added event received")
+		log.Log.Infof("Domain Device Added event received: %v", event)
 		name, err := d.GetName()
 		if err != nil {
 			log.Log.Reason(err).Info(cantDetermineLibvirtDomainName)
@@ -461,7 +462,7 @@ func (n *Notifier) StartDomainNotifier(
 	}
 
 	domainEventDeviceRemovedCallback := func(c *libvirt.Connect, d *libvirt.Domain, event *libvirt.DomainEventDeviceRemoved) {
-		log.Log.Infof("Domain Device Removed event received")
+		log.Log.Infof("Domain Device Removed event received: %v", event)
 		name, err := d.GetName()
 		if err != nil {
 			log.Log.Reason(err).Info(cantDetermineLibvirtDomainName)

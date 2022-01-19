@@ -2522,6 +2522,10 @@ func (d *VirtualMachineController) vmUpdateHelperDefault(origVMI *v1.VirtualMach
 			return fmt.Errorf("failed to adjust resources: %v", err)
 		}
 	} else if vmi.IsRunning() {
+		log.Log.Object(vmi).Info("update flow checkpoint 1")
+		log.Log.Object(vmi).Infof("DEBUG: SPEC ifaces: (%v)", vmi.Spec.Domain.Devices.Interfaces)
+		log.Log.Object(vmi).Infof("DEBUG: STATUS ifaces: (%v)", vmi.Status.Interfaces)
+
 		if err := d.hotplugSriovInterfaces(vmi); err != nil {
 			log.Log.Object(vmi).Error(err.Error())
 		}
@@ -2530,6 +2534,7 @@ func (d *VirtualMachineController) vmUpdateHelperDefault(origVMI *v1.VirtualMach
 			return err
 		}
 	}
+	log.Log.Object(vmi).Info("update flow checkpoint 2")
 
 	smbios := d.clusterConfig.GetSMBIOS()
 	period := d.clusterConfig.GetMemBalloonStatsPeriod()
@@ -2609,10 +2614,13 @@ func (d *VirtualMachineController) processVmUpdate(vmi *v1.VirtualMachineInstanc
 	d.handlePostMigrationProxyCleanup(vmi)
 
 	if d.isPreMigrationTarget(vmi) {
+		log.Log.Object(vmi).Info("processVmUpdate: migration target")
 		return d.vmUpdateHelperMigrationTarget(vmi)
 	} else if d.isMigrationSource(vmi) {
+		log.Log.Object(vmi).Info("processVmUpdate: migration source")
 		return d.vmUpdateHelperMigrationSource(vmi)
 	} else {
+		log.Log.Object(vmi).Info("processVmUpdate: update flow")
 		return d.vmUpdateHelperDefault(vmi, domainExists)
 	}
 }

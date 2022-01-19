@@ -1032,7 +1032,7 @@ var _ = Describe("[Serial]SRIOV", func() {
 				Expect(getInterfaceNetworkNameByMAC(vmi, mac)).To(Equal(sriovnet1))
 			})
 
-			Context("migration", func() {
+			FContext("migration", func() {
 
 				BeforeEach(func() {
 					if err := validateSRIOVSetup(virtClient, sriovResourceName, 2); err != nil {
@@ -1093,6 +1093,8 @@ var _ = Describe("[Serial]SRIOV", func() {
 						return checkMacAddress(updatedVMI, interfaceName, mac)
 					}, 30*time.Second, 5*time.Second).Should(Succeed(),
 						"SR-IOV VF is expected to exist in the guest after migration")
+
+					panic("TEST PASS - DUMP ARTIFACTS")
 				})
 			})
 		})
