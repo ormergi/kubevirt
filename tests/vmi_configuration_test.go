@@ -2933,62 +2933,77 @@ var _ = Describe("[sig-compute]Configurations", func() {
 				"the %s process is taking too much RAM! (%s > %s). All processes: %v",
 				process, actual.String(), memoryLimit.String(), processRss)
 		}
-		It("should be lower than allocated size", func() {
-			By("Starting a VirtualMachineInstance")
-			vmi := tests.NewRandomFedoraVMI()
-			vmi, err = virtClient.VirtualMachineInstance(util.NamespaceTestDefault).Create(vmi)
-			Expect(err).ToNot(HaveOccurred())
-			tests.WaitForSuccessfulVMIStart(vmi)
 
-			By("Expecting console")
-			Expect(console.LoginToFedora(vmi)).To(Succeed())
+		newSriovVmi := func() *v1.VirtualMachineInstance {
+			const networkName = "sriovnet0"
+			const netAttachDefName = "default/sriov-network"
 
-			By("Running ps in virt-launcher")
-			pods, err := virtClient.CoreV1().Pods(vmi.Namespace).List(context.Background(), metav1.ListOptions{
-				LabelSelector: v1.CreatedByLabel + "=" + string(vmi.GetUID()),
-			})
-			Expect(err).ToNot(HaveOccurred(), "Should list pods successfully")
-			var stdout, stderr string
-			errorMassageFormat := "failed after running the `ps` command with stdout:\n %v \n stderr:\n %v \n err: \n %v \n"
-			Eventually(func() error {
-				stdout, stderr, err = tests.ExecuteCommandOnPodV2(virtClient, &pods.Items[0], "compute",
-					[]string{
-						"ps",
-						"--no-header",
-						"axo",
-						"rss,command",
-					})
-				return err
-			}, time.Second, 50*time.Millisecond).Should(BeNil(), fmt.Sprintf(errorMassageFormat, stdout, stderr, err))
+			return libvmi.NewFedora(
+				libvmi.WithNetwork(libvmi.MultusNetwork(networkName, netAttachDefName)),
+				libvmi.WithInterface(libvmi.InterfaceDeviceWithSRIOVBinding(networkName)),
+			)
 
-			By("Parsing the output of ps")
-			processRss := make(map[string]resource.Quantity)
-			scanner := bufio.NewScanner(strings.NewReader(stdout))
-			for scanner.Scan() {
-				fields := strings.Fields(scanner.Text())
-				Expect(len(fields)).To(BeNumerically(">=", 2))
-				rss := fields[0]
-				command := filepath.Base(fields[1])
-				switch command {
-				case "virt-launcher-monitor", "virt-launcher", "virtlogd", "libvirtd", "qemu-kvm":
-					Expect(processRss).ToNot(HaveKey(command), "multiple %s processes found", command)
-					value := resource.MustParse(rss + "Ki")
-					processRss[command] = value
+		}
+
+		DescribeTable("should be lower than allocated size",
+			func(vmi *v1.VirtualMachineInstance) {
+				By("Starting a VirtualMachineInstance")
+				vmi, err = virtClient.VirtualMachineInstance(util.NamespaceTestDefault).Create(vmi)
+				Expect(err).ToNot(HaveOccurred())
+				tests.WaitForSuccessfulVMIStart(vmi)
+
+				By("Expecting console")
+				Expect(console.LoginToFedora(vmi)).To(Succeed())
+
+				By("Running ps in virt-launcher")
+				pods, err := virtClient.CoreV1().Pods(vmi.Namespace).List(context.Background(), metav1.ListOptions{
+					LabelSelector: v1.CreatedByLabel + "=" + string(vmi.GetUID()),
+				})
+				Expect(err).ToNot(HaveOccurred(), "Should list pods successfully")
+				var stdout, stderr string
+				errorMassageFormat := "failed after running the `ps` command with stdout:\n %v \n stderr:\n %v \n err: \n %v \n"
+				Eventually(func() error {
+					stdout, stderr, err = tests.ExecuteCommandOnPodV2(virtClient, &pods.Items[0], "compute",
+						[]string{
+							"ps",
+							"--no-header",
+							"axo",
+							"rss,command",
+						})
+					return err
+				}, time.Second, 50*time.Millisecond).Should(BeNil(), fmt.Sprintf(errorMassageFormat, stdout, stderr, err))
+
+				By("Parsing the output of ps")
+				processRss := make(map[string]resource.Quantity)
+				scanner := bufio.NewScanner(strings.NewReader(stdout))
+				for scanner.Scan() {
+					fields := strings.Fields(scanner.Text())
+					Expect(len(fields)).To(BeNumerically(">=", 2))
+					rss := fields[0]
+					command := filepath.Base(fields[1])
+					switch command {
+					case "virt-launcher-monitor", "virt-launcher", "virtlogd", "libvirtd", "qemu-kvm":
+						Expect(processRss).ToNot(HaveKey(command), "multiple %s processes found", command)
+						value := resource.MustParse(rss + "Ki")
+						processRss[command] = value
+					}
 				}
-			}
-			for _, process := range []string{"virt-launcher-monitor", "virt-launcher", "virtlogd", "libvirtd", "qemu-kvm"} {
-				Expect(processRss).To(HaveKey(process), "no %s process found", process)
-			}
+				for _, process := range []string{"virt-launcher-monitor", "virt-launcher", "virtlogd", "libvirtd", "qemu-kvm"} {
+					Expect(processRss).To(HaveKey(process), "no %s process found", process)
+				}
 
-			By("Ensuring no process is using too much ram")
-			doesntExceedMemoryUsage(&processRss, "virt-launcher-monitor", resource.MustParse(services.VirtLauncherMonitorOverhead))
-			doesntExceedMemoryUsage(&processRss, "virt-launcher", resource.MustParse(services.VirtLauncherOverhead))
-			doesntExceedMemoryUsage(&processRss, "virtlogd", resource.MustParse(services.VirtlogdOverhead))
-			doesntExceedMemoryUsage(&processRss, "libvirtd", resource.MustParse(services.LibvirtdOverhead))
-			qemuExpected := resource.MustParse(services.QemuOverhead)
-			qemuExpected.Add(vmi.Spec.Domain.Resources.Requests[k8sv1.ResourceMemory])
-			doesntExceedMemoryUsage(&processRss, "qemu-kvm", qemuExpected)
-		})
+				By("Ensuring no process is using too much ram")
+				doesntExceedMemoryUsage(&processRss, "virt-launcher-monitor", resource.MustParse(services.VirtLauncherMonitorOverhead))
+				doesntExceedMemoryUsage(&processRss, "virt-launcher", resource.MustParse(services.VirtLauncherOverhead))
+				doesntExceedMemoryUsage(&processRss, "virtlogd", resource.MustParse(services.VirtlogdOverhead))
+				doesntExceedMemoryUsage(&processRss, "libvirtd", resource.MustParse(services.LibvirtdOverhead))
+				qemuExpected := resource.MustParse(services.QemuOverhead)
+				qemuExpected.Add(vmi.Spec.Domain.Resources.Requests[k8sv1.ResourceMemory])
+				doesntExceedMemoryUsage(&processRss, "qemu-kvm", qemuExpected)
+			},
+			Entry("non SR-IOV VMI", tests.NewRandomFedoraVMI()),
+			Entry("SR-IOV VMI", newSriovVmi()),
+		)
 	})
 })
 
