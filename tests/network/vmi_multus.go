@@ -200,7 +200,7 @@ var _ = SIGDescribe("[Serial]Multus", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 			})
-			It("[test_id:1751]should create a virtual machine with one interface", func() {
+			FIt("[test_id:1751]should create a virtual machine with one interface", func() {
 				By("checking virtual machine instance can ping using ptp cni plugin")
 				detachedVMI := libvmi.NewAlpineWithTestTooling(
 					libvmi.WithCloudInitNoCloudNetworkData(networkData, false),
@@ -214,9 +214,12 @@ var _ = SIGDescribe("[Serial]Multus", func() {
 
 				detachedVMI, err = virtClient.VirtualMachineInstance(util.NamespaceTestDefault).Create(detachedVMI)
 				Expect(err).ToNot(HaveOccurred())
+
 				tests.WaitUntilVMIReady(detachedVMI, console.LoginToAlpine)
 
 				Expect(libnet.PingFromVMConsole(detachedVMI, ptpGateway)).To(Succeed())
+				Expect(true).To(BeFalse(), "DEBUG: INJECTED ERROR")
+
 			})
 
 			It("[test_id:1752]should create a virtual machine with one interface with network definition from different namespace", func() {
