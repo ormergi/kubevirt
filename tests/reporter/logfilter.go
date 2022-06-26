@@ -58,3 +58,12 @@ func parseUnixTimestamp(s string) (time.Time, error) {
 	}
 	return time.Unix(ts, 0), nil
 }
+
+func filterDmesgLogBySinceTimestamp(content, timestampPattern string, since time.Time) string {
+	const dmesgTimestampFormat = "Mon Jan 2 15:04:05 2006"
+	return filterBySinceTimestamp(content, timestampPattern, since,
+		func(s string) (time.Time, error) {
+			return time.Parse(dmesgTimestampFormat, s)
+		},
+	)
+}

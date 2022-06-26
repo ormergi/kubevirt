@@ -1,7 +1,6 @@
 package reporter
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -229,23 +227,16 @@ func (r *KubernetesReporter) logVMIMs(virtCli kubecli.KubevirtClient, vmims *v12
 }
 
 func (r *KubernetesReporter) logDMESG(virtCli kubecli.KubevirtClient, logsdir string, nodes []string, since time.Time) {
-
 	if logsdir == "" {
 		fmt.Fprintf(os.Stderr, "logsdir is empty, skipping logDMESG\n")
 		return
 	}
 
-	timestampRexp := regexp.MustCompile(`\[([^]]+)]`)
+	const dmesgLogTimestampPattern = `\[([^]]+)]`
+
 	for _, node := range nodes {
 		func() {
-			fileName := fmt.Sprintf("%d_dmesg_%s.log", r.failureCount, node)
-			f, err := os.OpenFile(filepath.Join(logsdir, fileName),
-				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to open the file %s: %v\n", fileName, err)
-				return
-			}
-			defer f.Close()
+
 			pod, err := kubecli.NewVirtHandlerClient(virtCli).Namespace(flags.KubeVirtInstallNamespace).ForNode(node).Pod()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, failedGetVirtHandlerPodFmt, node, err)
@@ -268,35 +259,15 @@ func (r *KubernetesReporter) logDMESG(virtCli kubecli.KubevirtClient, logsdir st
 			// TODO may need to be improved, in case that the auditlog is really huge, since stdout is in memory
 			stdout, _, err := tests.ExecuteCommandOnPodV2(virtCli, pod, virtHandlerName, commands)
 			if err != nil {
-				fmt.Fprintf(
-					os.Stderr,
-					failedExecuteCmdOnNodeFmt,
-					commands,
-					node, stdout, err,
-				)
+				fmt.Fprintf(os.Stderr, failedExecuteCmdOnNodeFmt, commands, node, stdout, err)
 				return
 			}
-			scanner := bufio.NewScanner(bytes.NewBufferString(stdout))
-			add := false
-			for scanner.Scan() {
-				line := scanner.Text()
-				if !add {
-					matches := timestampRexp.FindStringSubmatch(line)
-					if len(matches) == 0 {
-						continue
-					}
-					timestamp, err := time.Parse("Mon Jan 2 15:04:05 2006", matches[1])
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "failed to convert iso timestamp: %v\n", err)
-						continue
-					}
-					if !timestamp.UTC().Before(since.UTC()) {
-						f.WriteString(line + "\n")
-						add = true
-					}
-				} else {
-					f.WriteString(line + "\n")
-				}
+
+			filteredLog := filterDmesgLogBySinceTimestamp(stdout, dmesgLogTimestampPattern, since)
+
+			fileName := fmt.Sprintf("%d_dmesg_%s.log", r.failureCount, node)
+			if err := writeStringToFile(filepath.Join(logsdir, fileName), filteredLog); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to write node %q dmesg logs: %v\n", node, err)
 			}
 		}()
 	}
