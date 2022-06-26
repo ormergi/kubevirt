@@ -160,6 +160,8 @@ func (r *KubernetesReporter) dumpNamespaces(duration time.Duration, vmiNamespace
 	r.logJournal(virtCli, nodesDir, nodesWithVirtLauncher, duration, "")
 	r.logJournal(virtCli, nodesDir, nodesWithVirtLauncher, duration, "kubelet")
 
+	r.logMultus(virtCli, nodesDir, nodes, since)
+
 	r.logLogs(virtCli, podsDir, pods, since)
 
 	r.logVMIs(virtCli, vmis)
@@ -563,6 +565,54 @@ func (r *KubernetesReporter) logJournal(virtCli kubecli.KubevirtClient, logsdir 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to write node %s logs: %v\n", node, err)
 			continue
+		}
+	}
+}
+
+func (r *KubernetesReporter) logMultus(virtCli kubecli.KubevirtClient, path string, nodes *v1.NodeList, since time.Time) {
+	if path == "" {
+		fmt.Fprintf(os.Stderr, "target path is invalid %q, skipping Multus log dump\n", path)
+		return
+	}
+
+	const (
+		logFilePath          = "/var/log/multus.log"
+		lineTimestampPattern = `^(.+) \[\w+\]`
+	)
+
+	checkLogFileExistsCmd := []string{
+		virt_chroot.GetChrootBinaryPath(), "--mount", virt_chroot.GetChrootMountNamespace(), "exec", "--",
+		"/usr/bin/sh", "-cx", "[ -f " + logFilePath + " ]",
+	}
+
+	dumpContentCmd := []string{
+		virt_chroot.GetChrootBinaryPath(), "--mount", virt_chroot.GetChrootMountNamespace(), "exec", "--",
+		"/usr/bin/sh", "-cx", "cat " + logFilePath,
+	}
+
+	for _, node := range nodes.Items {
+		nodeName := node.GetName()
+		pod, err := kubecli.NewVirtHandlerClient(virtCli).Namespace(flags.KubeVirtInstallNamespace).ForNode(nodeName).Pod()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, failedGetVirtHandlerPodFmt, nodeName, err)
+			continue
+		}
+
+		if _, _, err = tests.ExecuteCommandOnPodV2(virtCli, pod, virtHandlerName, checkLogFileExistsCmd); err != nil {
+			continue
+		}
+
+		stdout, _, err := tests.ExecuteCommandOnPodV2(virtCli, pod, virtHandlerName, dumpContentCmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, failedExecuteCmdOnNodeFmt, dumpContentCmd, nodeName, stdout, err)
+			continue
+		}
+
+		filteredLog := filterMultusLogBySinceTimestamp(stdout, lineTimestampPattern, since)
+
+		fileName := fmt.Sprintf("%d_multus_%s.log", r.failureCount, nodeName)
+		if err := writeStringToFile(filepath.Join(path, fileName), filteredLog); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write node %q Multus logs: %v\n", nodeName, err)
 		}
 	}
 }
