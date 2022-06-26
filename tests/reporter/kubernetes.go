@@ -303,23 +303,15 @@ func (r *KubernetesReporter) logDMESG(virtCli kubecli.KubevirtClient, logsdir st
 }
 
 func (r *KubernetesReporter) logAuditLogs(virtCli kubecli.KubevirtClient, logsdir string, nodes []string, since time.Time) {
-
 	if logsdir == "" {
 		fmt.Fprintf(os.Stderr, "logsdir is empty, skipping logAuditLogs\n")
 		return
 	}
 
-	timestampRexp := regexp.MustCompile(`audit\(([0-9]+)[0-9.:]+\)`)
+	const auditLogTimestampPattern = `audit\(([0-9]+)[0-9.:]+\)`
+
 	for _, node := range nodes {
 		func() {
-			fileName := fmt.Sprintf("%d_auditlog_%s.log", r.failureCount, node)
-			f, err := os.OpenFile(filepath.Join(logsdir, fileName),
-				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to open the file %s: %v\n", fileName, err)
-				return
-			}
-			defer f.Close()
 			pod, err := kubecli.NewVirtHandlerClient(virtCli).Namespace(flags.KubeVirtInstallNamespace).ForNode(node).Pod()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, failedGetVirtHandlerPodFmt, node, err)
@@ -329,34 +321,15 @@ func (r *KubernetesReporter) logAuditLogs(virtCli kubecli.KubevirtClient, logsdi
 			getAuditLogCmd := []string{"cat", "/proc/1/root/var/log/audit/audit.log"}
 			stdout, _, err := tests.ExecuteCommandOnPodV2(virtCli, pod, virtHandlerName, getAuditLogCmd)
 			if err != nil {
-				fmt.Fprintf(
-					os.Stderr,
-					failedExecuteCmdOnNodeFmt,
-					getAuditLogCmd, node, stdout, err,
-				)
+				fmt.Fprintf(os.Stderr, failedExecuteCmdOnNodeFmt, getAuditLogCmd, node, stdout, err)
 				return
 			}
-			scanner := bufio.NewScanner(bytes.NewBufferString(stdout))
-			add := false
-			for scanner.Scan() {
-				line := scanner.Text()
-				if !add {
-					matches := timestampRexp.FindStringSubmatch(line)
-					if len(matches) == 0 {
-						continue
-					}
-					timestamp, err := strconv.ParseInt(matches[1], 10, 64)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "failed to convert string to unix timestamp: %v\n", err)
-						continue
-					}
-					if !time.Unix(timestamp, 0).Before(since) {
-						f.WriteString(line + "\n")
-						add = true
-					}
-				} else {
-					f.WriteString(line + "\n")
-				}
+
+			filteredLog := filterAuditLogBySinceTimestamp(stdout, auditLogTimestampPattern, since)
+
+			fileName := fmt.Sprintf("%d_auditlog_%s.log", r.failureCount, node)
+			if err := writeStringToFile(filepath.Join(logsdir, fileName), filteredLog); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to write node %q dmesg logs: %v\n", node, err)
 			}
 		}()
 	}

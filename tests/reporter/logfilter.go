@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,4 +45,16 @@ func filterMultusLogBySinceTimestamp(content, timestampPattern string, since tim
 			return time.Parse(time.RFC3339, s)
 		},
 	)
+}
+
+func filterAuditLogBySinceTimestamp(content, timestampPattern string, since time.Time) string {
+	return filterBySinceTimestamp(content, timestampPattern, since, parseUnixTimestamp)
+}
+
+func parseUnixTimestamp(s string) (time.Time, error) {
+	ts, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(ts, 0), nil
 }
