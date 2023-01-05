@@ -153,3 +153,16 @@ func FilterStatusInterfacesByNames(interfaces []v1.VirtualMachineInstanceNetwork
 
 	return filtered
 }
+
+func FilterNonDefaultIfacesByNetworks(ifaces []v1.Interface, networks []v1.Network) []v1.Interface {
+	ifacesByName := IndexInterfaceSpecByName(ifaces)
+	nonDefaultNetworks := FilterMultusNonDefaultNetworks(networks)
+
+	var filteredIfaces []v1.Interface
+	for _, network := range nonDefaultNetworks {
+		if iface, nonDefultNetworkIface := ifacesByName[network.Name]; nonDefultNetworkIface {
+			filteredIfaces = append(filteredIfaces, iface)
+		}
+	}
+	return filteredIfaces
+}

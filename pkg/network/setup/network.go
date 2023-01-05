@@ -20,6 +20,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 
 	v1 "kubevirt.io/api/core/v1"
@@ -86,6 +87,19 @@ func (v VMNetworkConfigurator) getPhase2NICsWithGenerator(domain *api.Domain, po
 	return nics, nil
 }
 
+func (n *VMNetworkConfigurator) SetupMigrationTargetPodNetworkPhase1(launcherPID int) error {
+	nics, err := n.getPhase1NICs(&launcherPID)
+	if err != nil {
+		return err
+	}
+	for _, nic := range nics {
+		if err := nic.PlugPhase1(); err != nil {
+			return fmt.Errorf("failed plugging phase1 at nic '%s': %w", nic.podInterfaceName, err)
+		}
+	}
+	return nil
+}
+
 func (n *VMNetworkConfigurator) SetupPodNetworkPhase1(launcherPID int) error {
 	nics, err := n.getPhase1NICs(&launcherPID)
 	if err != nil {
@@ -113,27 +127,41 @@ func (n *VMNetworkConfigurator) CreatePodAuxiliaryInfra(pid int, ifaceName strin
 	return nil
 }
 
-func (n *VMNetworkConfigurator) SetupPodNetworkPhase2(domain *api.Domain) error {
+func (n *VMNetworkConfigurator) SetupPodNetworkPhase2(domain *api.Domain, nicsCtxs map[string]context.Context) error {
 	nics, err := n.getPhase2NICs(domain)
 	if err != nil {
 		return err
 	}
 	for _, nic := range nics {
-		if err := nic.PlugPhase2(domain); err != nil {
+		ctx := context.Background()
+		if ifaceCtx, exists := nicsCtxs[nic.podInterfaceName]; exists {
+			ctx = ifaceCtx
+		}
+
+		if err := nic.PlugPhase2(ctx, domain); err != nil {
 			return fmt.Errorf("failed plugging phase2 at nic '%s': %w", nic.podInterfaceName, err)
 		}
 	}
 	return nil
 }
-func (n *VMNetworkConfigurator) StartDHCP(domain *api.Domain, ifaceName string) error {
+
+func (n *VMNetworkConfigurator) StartDHCP(ctx context.Context, domain *api.Domain, ifaceName string) error {
 	nics, err := n.getPhase2NICsWithGenerator(domain, newHotplugPodNicGenerator(ifaceName))
 	if err != nil {
 		return err
 	}
 	for _, nic := range nics {
-		if err := nic.StartDHCP(); err != nil {
+		if err := nic.StartDHCP(ctx); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (n *VMNetworkConfigurator) StopDHCP(ctx context.Context, cancel context.CancelFunc, domain *api.Domain, ifaceName string) error {
+	nic := newPhase2UnplugPodNIC(ifaceName, n.vmi, n.handler, n.cacheCreator, domain)
+	if err := nic.StopDHCP(ctx, cancel); err != nil {
+		return err
 	}
 	return nil
 }

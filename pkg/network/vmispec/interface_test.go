@@ -153,6 +153,39 @@ var _ = Describe("VMI network spec", func() {
 		expectedInterfaces := vmiStatusInterfaces(names...)
 		Expect(netvmispec.FilterStatusInterfacesByNames(statusInterfaces, names)).To(Equal(expectedInterfaces))
 	})
+
+	Context("filter non-default spec interfaces by spec networks", func() {
+		const (
+			defaultNetworkName = "default"
+			bridgeNetworkName  = "brnet1"
+			sriovNetworkName   = "sriovnet1"
+		)
+		var (
+			defaultNetwork = newDefaultNetwork()
+			bridgeNetwork  = newMultusNetwork(bridgeNetworkName)
+			sriovNetwork   = newMultusNetwork(sriovNetworkName)
+		)
+		DescribeTable("should return non-default interfaces, given",
+			func(ifaces []v1.Interface, networks []v1.Network, expectedIfaces []v1.Interface) {
+				Expect(netvmispec.FilterNonDefaultIfacesByNetworks(ifaces, networks)).To(Equal(expectedIfaces))
+			},
+			Entry("default network & no non-default interfaces, should return nil",
+				vmiSpecInterfaces(defaultNetworkName),
+				[]v1.Network{defaultNetwork},
+				nil,
+			),
+			Entry("default & multiple non-default networks",
+				vmiSpecInterfaces(defaultNetworkName, bridgeNetworkName, sriovNetworkName),
+				[]v1.Network{defaultNetwork, bridgeNetwork, sriovNetwork},
+				vmiSpecInterfaces(bridgeNetworkName, sriovNetworkName),
+			),
+			Entry("default network & multiple non-default networks",
+				vmiSpecInterfaces(bridgeNetworkName, sriovNetworkName),
+				[]v1.Network{bridgeNetwork, sriovNetwork},
+				vmiSpecInterfaces(bridgeNetworkName, sriovNetworkName),
+			),
+		)
+	})
 })
 
 func podNetwork(name string) v1.Network {
@@ -191,4 +224,22 @@ func vmiSpecInterfaces(names ...string) []v1.Interface {
 		specInterfaces = append(specInterfaces, v1.Interface{Name: name})
 	}
 	return specInterfaces
+}
+
+func newDefaultNetwork() v1.Network {
+	return v1.Network{
+		Name: "default",
+		NetworkSource: v1.NetworkSource{
+			Pod: &v1.PodNetwork{},
+		},
+	}
+}
+
+func newMultusNetwork(name string) v1.Network {
+	return v1.Network{
+		Name: name,
+		NetworkSource: v1.NetworkSource{
+			Multus: &v1.MultusNetwork{},
+		},
+	}
 }

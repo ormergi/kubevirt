@@ -39,6 +39,8 @@ import (
 	"sync"
 	"time"
 
+	"kubevirt.io/kubevirt/pkg/network/vmispec"
+
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/device/hostdevice/generic"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/device/hostdevice/gpu"
 
@@ -153,6 +155,7 @@ type LibvirtDomainManager struct {
 	disksInfo                map[string]*cmdv1.DiskInfo
 	cancelSafetyUnfreezeChan chan struct{}
 	migrateInfoStats         *stats.DomainJobInfo
+	dhcpServersContexts      map[string]contextStore
 }
 
 type pausedVMIs struct {
@@ -198,6 +201,7 @@ func newLibvirtDomainManager(connection cli.Connection, virtShareDir, ephemeralD
 		disksInfo:                map[string]*cmdv1.DiskInfo{},
 		cancelSafetyUnfreezeChan: make(chan struct{}),
 		migrateInfoStats:         &stats.DomainJobInfo{},
+		dhcpServersContexts:      map[string]contextStore{},
 	}
 
 	manager.hotplugHostDevicesInProgress = make(chan struct{}, maxConcurrentHotplugHostDevices)
@@ -558,9 +562,20 @@ func (l *LibvirtDomainManager) preStartHook(vmi *v1.VirtualMachineInstance, doma
 		}
 	}
 
-	err = netsetup.NewVMNetworkConfigurator(vmi, cache.CacheCreator{}).SetupPodNetworkPhase2(domain)
+	nonDefaultNetworks := vmispec.FilterMultusNonDefaultNetworks(vmi.Spec.Networks)
+	networksCtxs := make(map[string]context.Context, len(nonDefaultNetworks))
+	networksCtxStores := make(map[string]contextStore, len(nonDefaultNetworks))
+	for _, net := range nonDefaultNetworks {
+		ctx, cancel := context.WithCancel(context.Background())
+		networksCtxs[net.Name] = ctx
+		networksCtxStores[net.Name] = contextStore{ctx, cancel}
+	}
+	err = netsetup.NewVMNetworkConfigurator(vmi, cache.CacheCreator{}).SetupPodNetworkPhase2(domain, networksCtxs)
 	if err != nil {
 		return domain, fmt.Errorf("preparing the pod network failed: %v", err)
+	}
+	for networkName, ctxStore := range networksCtxStores {
+		l.dhcpServersContexts[vmiIfaceKey(vmi.UID, networkName)] = ctxStore
 	}
 
 	// Create ephemeral disk for container disks
@@ -981,9 +996,13 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 	for _, networkName := range ifacesMissingInDomain(netsetup.ReadyInterfacesToHotplug(vmi), oldSpec) {
 		log.Log.Infof("will hot plug %s", networkName)
 
-		if err := vmConfigurator.StartDHCP(domain, networkName); err != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		if err := vmConfigurator.StartDHCP(ctx, domain, networkName); err != nil {
+			cancel()
 			return nil, err
 		}
+		log.Log.V(4).Infof("DEBUG: dhcpServersContexts: adding key: %s", vmiIfaceKey(vmi.UID, networkName))
+		l.dhcpServersContexts[vmiIfaceKey(vmi.UID, networkName)] = contextStore{ctx: ctx, cancel: cancel}
 
 		domainIfaceFromCache, err := cache.ReadDomainInterfaceCache(cacheClient, "self", networkName)
 		if err != nil {
@@ -1005,8 +1024,32 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 		}
 	}
 
-	// TODO: check if VirtualMachineInstance Spec and Domain Spec are equal or if we have to sync
+	domainIfaceToRemove := netsetup.FilterDomainInterfaceByName(
+		netsetup.InterfacesToUnplug(vmi),
+		oldSpec.Devices.Interfaces,
+		netsetup.SanitizeDomainDeviceIfaceAliasName,
+	)
+	log.Log.V(4).Infof("DEBUG: domainIfaceToRemove: %v", domainIfaceToRemove)
+	// stop dhcp servers
+	for ifaceName, _ := range domainIfaceToRemove {
+		dhcpKey := vmiIfaceKey(vmi.UID, ifaceName)
+		if ctx, exists := l.dhcpServersContexts[dhcpKey]; exists {
+			log.Log.V(4).Infof("DEBUG: manager: stopping dhcp server %s", ifaceName)
+			if err := vmConfigurator.StopDHCP(ctx.ctx, ctx.cancel, domain, ifaceName); err != nil {
+				log.Log.V(4).Infof("DEBUG: manager: failed to stop dhcp server %s: %v", ifaceName, err)
+				return nil, err
+			}
+			log.Log.V(4).Infof("DEBUG: manager: stopping dhcp server %s finished", ifaceName)
+			log.Log.V(4).Infof("DEBUG: dhcpServersContexts: removing key: %s", dhcpKey)
+			delete(l.dhcpServersContexts, dhcpKey)
+		}
+	}
+
 	return &oldSpec, nil
+}
+
+func vmiIfaceKey(uid types.UID, ifaceName string) string {
+	return fmt.Sprintf("%s.%s", uid, ifaceName)
 }
 
 func getSourceFile(disk api.Disk) string {

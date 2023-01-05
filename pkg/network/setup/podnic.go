@@ -20,6 +20,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -93,6 +94,38 @@ func (hpng hotplugPodNicGenerator) relevantNetworks(vmi *v1.VirtualMachineInstan
 	return networksToHotplug
 }
 
+type hotUnplugPodNicGenerator struct {
+	ifacesToUnplug []string
+}
+
+func newHotUnplugPodNicGenerator(ifaceToUnplug string) hotUnplugPodNicGenerator {
+	return hotUnplugPodNicGenerator{ifacesToUnplug: []string{ifaceToUnplug}}
+}
+
+func (_ hotUnplugPodNicGenerator) generate(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netdriver.NetworkHandler, cacheCreator cacheCreator, launcherPID *int) (*podNIC, error) {
+	podnic, err := newPodNIC(vmi, network, handler, cacheCreator, launcherPID)
+	if err != nil {
+		return nil, err
+	}
+
+	if launcherPID == nil {
+		return nil, fmt.Errorf("missing launcher PID to construct infra configurators")
+	}
+
+	return setupPodNicInfraConfigurator(podnic)
+}
+
+func (hpng hotUnplugPodNicGenerator) relevantNetworks(vmi *v1.VirtualMachineInstance) []v1.Network {
+	log.Log.V(4).Infof("DEBUG: podnic: relevanNetworks: vmi.spec.networks: %v", vmi.Spec.Networks)
+	log.Log.V(4).Infof("DEBUG: podnic: relevanNetworks: vmi.Spec.Domain.Devices.Interfaces: %v", vmi.Spec.Domain.Devices.Interfaces)
+
+	var networksToHotplug []v1.Network
+	for _, ifaceName := range hpng.ifacesToUnplug {
+		networksToHotplug = append(networksToHotplug, v1.Network{Name: ifaceName, NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{}}})
+	}
+	return networksToHotplug
+}
+
 type standardPodNicGenerator struct{}
 
 func (_ standardPodNicGenerator) generate(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netdriver.NetworkHandler, cacheCreator cacheCreator, launcherPID *int) (*podNIC, error) {
@@ -145,6 +178,39 @@ func newPhase2PodNIC(vmi *v1.VirtualMachineInstance, network *v1.Network, handle
 	podnic.domainGenerator = podnic.newLibvirtSpecGenerator(domain)
 
 	return podnic, nil
+}
+
+// newPhase2UnplugPodNIC return instance of PodNIC
+func newPhase2UnplugPodNIC(ifaceName string, vmi *v1.VirtualMachineInstance, handler netdriver.NetworkHandler, cacheCreator cacheCreator, domain *api.Domain) *podNIC {
+	iface := v1.Interface{
+		Name:                   ifaceName,
+		InterfaceBindingMethod: v1.InterfaceBindingMethod{Bridge: &v1.InterfaceBridge{}},
+	}
+	network := v1.Network{
+		Name:          ifaceName,
+		NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{}},
+	}
+
+	vmiCopy := vmi.DeepCopy()
+	vmiCopy.Spec.Domain.Devices.Interfaces = append(vmiCopy.Spec.Domain.Devices.Interfaces, iface)
+	vmiCopy.Spec.Networks = append(vmiCopy.Spec.Networks, network)
+
+	networkNameScheme := namescheme.CreateNetworkNameScheme(vmiCopy.Spec.Networks)
+
+	nic := &podNIC{
+		handler:          handler,
+		cacheCreator:     cacheCreator,
+		launcherPID:      nil,
+		podInterfaceName: networkNameScheme[ifaceName],
+		vmi:              vmiCopy,
+		vmiSpecIface:     &iface,
+		vmiSpecNetwork:   &network,
+	}
+
+	nic.dhcpConfigurator = nic.newDHCPConfigurator()
+	nic.domainGenerator = nic.newLibvirtSpecGenerator(domain)
+
+	return nic
 }
 
 func newPodNIC(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netdriver.NetworkHandler, cacheCreator cacheCreator, launcherPID *int) (*podNIC, error) {
@@ -295,7 +361,7 @@ func (l *podNIC) PlugPhase1() error {
 	return nil
 }
 
-func (l *podNIC) PlugPhase2(domain *api.Domain) error {
+func (l *podNIC) PlugPhase2(ctx context.Context, domain *api.Domain) error {
 	precond.MustNotBeNil(domain)
 
 	// There is nothing to plug for SR-IOV devices
@@ -307,14 +373,14 @@ func (l *podNIC) PlugPhase2(domain *api.Domain) error {
 		log.Log.Reason(err).Critical("failed to create libvirt configuration")
 	}
 
-	if err := l.StartDHCP(); err != nil {
+	if err := l.StartDHCP(ctx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (l *podNIC) StartDHCP() error {
+func (l *podNIC) StartDHCP(ctx context.Context) error {
 	if l.dhcpConfigurator != nil {
 		dhcpConfig, err := l.dhcpConfigurator.Generate()
 		if err != nil {
@@ -322,11 +388,44 @@ func (l *podNIC) StartDHCP() error {
 			return err
 		}
 		log.Log.V(4).Infof("The imported dhcpConfig: %s", dhcpConfig.String())
-		if err := l.dhcpConfigurator.EnsureDHCPServerStarted(l.podInterfaceName, *dhcpConfig, l.vmiSpecIface.DHCPOptions); err != nil {
+		if err := l.dhcpConfigurator.EnsureDHCPServerStarted(ctx, l.podInterfaceName, *dhcpConfig, l.vmiSpecIface.DHCPOptions); err != nil {
 			log.Log.Reason(err).Criticalf("failed to ensure dhcp service running for: %s", l.podInterfaceName)
 			panic(err)
 		}
 	}
+	return nil
+}
+
+func (l *podNIC) StopDHCP(ctx context.Context, cancel context.CancelFunc) error {
+	log.Log.V(4).Infof("DEBUG: podnic: stopping dhcp server %s", l.podInterfaceName)
+	if l.dhcpConfigurator != nil {
+		dhcpConfig, err := l.dhcpConfigurator.Generate()
+		if err != nil {
+			log.Log.Reason(err).Errorf("failed to get a dhcp configuration for: %s", l.podInterfaceName)
+			return err
+		}
+		log.Log.V(4).Infof("The imported dhcpConfig: %s", dhcpConfig.String())
+
+		if dhcpConfig.IPAMDisabled {
+			return nil
+		}
+
+		log.Log.Infof("stopping DHCP server %q", dhcpConfig.Name)
+		if err := cancelContext(ctx, cancel); err == context.Canceled {
+			log.Log.V(4).Infof("DHCP server %q already stopped", dhcpConfig.Name)
+		}
+	}
+	log.Log.V(4).Infof("DEBUG: podnic: stopping dhcp server %s finished", l.podInterfaceName)
+	return nil
+}
+
+func cancelContext(ctx context.Context, cancel context.CancelFunc) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	cancel()
 	return nil
 }
 
