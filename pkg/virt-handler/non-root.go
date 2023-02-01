@@ -114,7 +114,7 @@ func getTapDevices(vmi *v1.VirtualMachineInstance) []string {
 		}
 	}
 
-	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi.Spec.Networks)
+	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi)
 	tapDevices := []string{}
 	for _, net := range vmi.Spec.Networks {
 		_, isMacvtapNetwork := macvtap[net.Name]

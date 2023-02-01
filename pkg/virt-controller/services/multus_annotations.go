@@ -59,7 +59,7 @@ func (mnap multusNetworkAnnotationPool) toString() (string, error) {
 func generateMultusCNIAnnotation(vmi *v1.VirtualMachineInstance) (string, error) {
 	multusNetworkAnnotationPool := multusNetworkAnnotationPool{}
 
-	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi.Spec.Networks)
+	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi)
 	for _, network := range vmi.Spec.Networks {
 		if vmispec.IsSecondaryMultusNetwork(network) {
 			podInterfaceName := networkNameScheme[network.Name]

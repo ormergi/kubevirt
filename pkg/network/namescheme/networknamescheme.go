@@ -13,51 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright 2022 Red Hat, Inc.
+ * Copyright 2023 Red Hat, Inc.
  *
  */
 
 package namescheme
 
 import (
-	"crypto/sha256"
-	"fmt"
-	"io"
-
 	v1 "kubevirt.io/api/core/v1"
-
-	"kubevirt.io/kubevirt/pkg/network/vmispec"
 )
 
 const (
-	// MaxIfaceNameLen equals max kernel interface name len (15) - length("-nic")
-	// which is the suffix used for the bridge binding interface with IPAM.
-	// (the interface created to hold the pod's IP address - and thus appease CNI).
-	MaxIfaceNameLen         = 11
-	PrimaryPodInterfaceName = "eth0"
+	NetworkNameSchemeLabel   = "kubevirt.io/launcherNetworkInterfacesNameScheme"
+	NetworkNameSchemeIndexed = "Indexed"
+	NetworkNameSchemeMix     = "Mixed"
+	NetworkNameSchemeHash    = "Hashed"
+
+	// MaxTapDeviceNameLen equals max kernel interface name len (15) - length("tap")
+	// which is the suffix used for the tap device interface.
+	MaxTapDeviceNameLen = 8
 )
 
-// CreateNetworkNameScheme iterates over the VMI's Networks, and creates for each a pod interface name.
-// The returned map associates between the network name and the generated pod interface name.
-// Primary network will use "eth0" and the secondary ones will be named "net<id>" where id is the network name sha256.
-func CreateNetworkNameScheme(vmiNetworks []v1.Network) map[string]string {
-	networkNameSchemeMap := mapMultusNonDefaultNetworksToPodInterfaceName(vmiNetworks)
-	if multusDefaultNetwork := vmispec.LookUpDefaultNetwork(vmiNetworks); multusDefaultNetwork != nil {
-		networkNameSchemeMap[multusDefaultNetwork.Name] = PrimaryPodInterfaceName
+func CreateNetworkNameScheme(vmi *v1.VirtualMachineInstance) map[string]string {
+	if vmi.Labels[NetworkNameSchemeLabel] == NetworkNameSchemeIndexed {
+		return createIndexedNetworkNameScheme(vmi.Spec.Networks)
+	} else {
+		return createHashNetworkNameScheme(vmi.Spec.Networks)
 	}
-	return networkNameSchemeMap
-}
-
-func mapMultusNonDefaultNetworksToPodInterfaceName(networks []v1.Network) map[string]string {
-	networkNameSchemeMap := map[string]string{}
-	for _, network := range vmispec.FilterMultusNonDefaultNetworks(networks) {
-		networkNameSchemeMap[network.Name] = hashNetworkName(network.Name)
-	}
-	return networkNameSchemeMap
-}
-
-func hashNetworkName(networkName string) string {
-	hash := sha256.New()
-	_, _ = io.WriteString(hash, networkName)
-	return fmt.Sprintf("%x", hash.Sum(nil))[:MaxIfaceNameLen]
 }

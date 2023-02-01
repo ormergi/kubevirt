@@ -108,7 +108,7 @@ func newPodNIC(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netd
 		return nil, fmt.Errorf("no iface matching with network %s", network.Name)
 	}
 
-	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi.Spec.Networks)
+	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi)
 	podInterfaceName, exists := networkNameScheme[network.Name]
 	if !exists {
 		return nil, fmt.Errorf("pod interface name not found for network %s", network.Name)

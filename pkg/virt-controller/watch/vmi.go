@@ -1101,7 +1101,7 @@ func (c *VMIController) sync(vmi *virtv1.VirtualMachineInstance, pod *k8sv1.Pod,
 	if !isTempPod(pod) && isPodReady(pod) {
 		if vmispec.SRIOVInterfaceExist(vmi.Spec.Domain.Devices.Interfaces) {
 			networkPCIMapAnnotationValue := sriov.CreateNetworkPCIAnnotationValue(
-				vmi.Spec.Networks, vmi.Spec.Domain.Devices.Interfaces, pod.Annotations[networkv1.NetworkStatusAnnot],
+				vmi, pod.Annotations[networkv1.NetworkStatusAnnot],
 			)
 			newAnnotations := map[string]string{sriov.NetworkPCIMapAnnot: networkPCIMapAnnotationValue}
 			patchedPod, err := c.syncPodAnnotations(pod, newAnnotations)
