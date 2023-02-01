@@ -21,10 +21,15 @@ package link
 
 import (
 	"fmt"
+
+	"kubevirt.io/kubevirt/pkg/network/namescheme"
 )
 
 func GenerateTapDeviceName(podInterfaceName string) string {
-	return "tap" + podInterfaceName[3:]
+	if podIfaceIndex := namescheme.IndexedInterfaceName(podInterfaceName); podIfaceIndex != "" {
+		return "tap" + podIfaceIndex
+	}
+	return "tap" + podInterfaceName[:namescheme.MaxTapDeviceNameLen]
 }
 
 func GenerateNewBridgedVmiInterfaceName(originalPodInterfaceName string) string {

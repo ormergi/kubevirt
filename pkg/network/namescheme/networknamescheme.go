@@ -23,6 +23,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	v1 "kubevirt.io/api/core/v1"
 
@@ -33,7 +35,10 @@ const (
 	// MaxIfaceNameLen equals max kernel interface name len (15) - length("-nic")
 	// which is the suffix used for the bridge binding interface with IPAM.
 	// (the interface created to hold the pod's IP address - and thus appease CNI).
-	MaxIfaceNameLen         = 11
+	MaxIfaceNameLen = 11
+	// MaxTapDeviceNameLen equals max kernel interface name len (15) - length("tap")
+	// which is the suffix used for the tap device interface.
+	MaxTapDeviceNameLen     = 8
 	PrimaryPodInterfaceName = "eth0"
 )
 
@@ -80,8 +85,21 @@ func CreateCombinedNetworkNameScheme(networks []v1.Network) map[string][]string 
 	return networkNameSchemeMap
 }
 
-const interfaceNamePrefix = "net"
+const (
+	defaultInterfaceNamePrefix = "eth"
+	interfaceNamePrefix        = "net"
+)
 
 func secondaryInterfaceIndexedName(idx int) string {
 	return fmt.Sprintf("%s%d", interfaceNamePrefix, idx)
+}
+
+func IndexedInterfaceName(name string) string {
+	for _, prefix := range []string{interfaceNamePrefix, defaultInterfaceNamePrefix} {
+		index := strings.TrimPrefix(name, prefix)
+		if _, err := strconv.Atoi(index); err == nil {
+			return index
+		}
+	}
+	return ""
 }
