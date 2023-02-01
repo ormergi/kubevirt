@@ -23,7 +23,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	networkv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"kubevirt.io/kubevirt/pkg/network/multus"
+
 	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/log"
 
@@ -39,8 +40,8 @@ const (
 	VolumePath         = "network-pci-map"
 )
 
-func CreateNetworkPCIAnnotationValue(networks []v1.Network, interfaces []v1.Interface, networkStatusAnnotationValue string) string {
-	networkPCIMap, err := mapNetworkNameToPCIAddress(networks, interfaces, networkStatusAnnotationValue)
+func CreateNetworkPCIAnnotationValue(vmi *v1.VirtualMachineInstance, networkStatusAnnotationValue string) string {
+	networkPCIMap, err := mapNetworkNameToPCIAddress(vmi, networkStatusAnnotationValue)
 	if err != nil {
 		log.Log.Warningf("failed to create network-pci-map: %v", err)
 		networkPCIMap = map[string]string{}
@@ -55,16 +56,15 @@ func CreateNetworkPCIAnnotationValue(networks []v1.Network, interfaces []v1.Inte
 	return string(networkPCIMapBytes)
 }
 
-func mapNetworkNameToPCIAddress(networks []v1.Network, interfaces []v1.Interface,
-	networkStatusAnnotationValue string) (map[string]string, error) {
-	multusInterfaceNameToNetworkStatusMap, err := mapMultusInterfaceNameToNetworkStatus(networkStatusAnnotationValue)
+func mapNetworkNameToPCIAddress(vmi *v1.VirtualMachineInstance, networkStatusAnnotationValue string) (map[string]string, error) {
+	multusInterfaceNameToNetworkStatusMap, err := multus.MapInterfaceNameToNetworkStatus(networkStatusAnnotationValue)
 	if err != nil {
 		return nil, err
 	}
-	networkNameScheme := namescheme.CreateNetworkNameScheme(networks)
+	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi)
 
 	networkPCIMap := map[string]string{}
-	for _, sriovIface := range vmispec.FilterSRIOVInterfaces(interfaces) {
+	for _, sriovIface := range vmispec.FilterSRIOVInterfaces(vmi.Spec.Domain.Devices.Interfaces) {
 		multusInterfaceName := networkNameScheme[sriovIface.Name]
 		networkStatusEntry, exist := multusInterfaceNameToNetworkStatusMap[multusInterfaceName]
 		if !exist {
@@ -81,21 +81,4 @@ func mapNetworkNameToPCIAddress(networks []v1.Network, interfaces []v1.Interface
 		networkPCIMap[sriovIface.Name] = pciAddress
 	}
 	return networkPCIMap, nil
-}
-
-func mapMultusInterfaceNameToNetworkStatus(networkStatusAnnotationValue string) (map[string]networkv1.NetworkStatus, error) {
-	if networkStatusAnnotationValue == "" {
-		return nil, fmt.Errorf("network-status annotation is not present")
-	}
-	var networkStatusList []networkv1.NetworkStatus
-	if err := json.Unmarshal([]byte(networkStatusAnnotationValue), &networkStatusList); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal network-status annotation: %v", err)
-	}
-
-	multusInterfaceNameToNetworkStatusMap := map[string]networkv1.NetworkStatus{}
-	for _, networkStatus := range networkStatusList {
-		multusInterfaceNameToNetworkStatusMap[networkStatus.Interface] = networkStatus
-	}
-
-	return multusInterfaceNameToNetworkStatusMap, nil
 }
