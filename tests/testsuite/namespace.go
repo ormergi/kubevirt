@@ -43,6 +43,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/controller"
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
 
+	"kubevirt.io/kubevirt/tests/decorators"
 	"kubevirt.io/kubevirt/tests/flags"
 	"kubevirt.io/kubevirt/tests/framework/checks"
 	"kubevirt.io/kubevirt/tests/framework/cleanup"
@@ -80,6 +81,8 @@ func CleanNamespaces() {
 	virtCli, err := kubecli.GetKubevirtClientFromRESTConfig(restConfig)
 	util.PanicOnError(err)
 
+	currentGinkgoSpecReport := CurrentSpecReport()
+
 	for _, namespace := range TestNamespaces {
 		listOptions := metav1.ListOptions{
 			LabelSelector: cleanup.TestLabelForNamespace(namespace),
@@ -110,9 +113,9 @@ func CleanNamespaces() {
 		// Remove all VirtualMachineReplicaSets
 		util.PanicOnError(virtCli.RestClient().Delete().Namespace(namespace).Resource("virtualmachineinstancereplicasets").Do(context.Background()).Error())
 
-		deleteVirtualMachineInstances(namespace)
+		deleteVirtualMachineInstances(currentGinkgoSpecReport, namespace)
 
-		deletePods(namespace)
+		deletePods(currentGinkgoSpecReport, namespace)
 
 		// Remove all Services
 		svcList, err := virtCli.CoreV1().Services(namespace).List(context.Background(), metav1.ListOptions{})
@@ -167,7 +170,7 @@ func CleanNamespaces() {
 			}
 		}
 
-		deleteNetworkAttachmentDefinitions(namespace)
+		deleteNetworkAttachmentDefinitions(currentGinkgoSpecReport, namespace)
 
 		// Remove all Istio Sidecars, VirtualServices, DestinationRules and Gateways
 		for _, res := range []string{"sidecars", "virtualservices", "destinationrules", "gateways"} {
@@ -222,7 +225,11 @@ func CleanNamespaces() {
 	}
 }
 
-func deleteVirtualMachineInstances(namespace string) {
+func deleteVirtualMachineInstances(specReport SpecReport, namespace string) {
+	if decorators.HasLabel(specReport, decorators.RetainVirtualMachineInstances) {
+		return
+	}
+
 	virtCli := kubevirt.Client()
 	util.PanicOnError(virtCli.RestClient().Delete().Namespace(namespace).Resource("virtualmachineinstances").Do(context.Background()).Error())
 	vmis, err := virtCli.VirtualMachineInstance(namespace).List(context.Background(), &metav1.ListOptions{})
@@ -237,10 +244,28 @@ func deleteVirtualMachineInstances(namespace string) {
 	}
 }
 
-func deletePods(namespace string) {
+func deletePods(specReport SpecReport, namespace string) {
 	virtCli := kubevirt.Client()
-	podList, err := virtCli.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-       util.PanicOnError(err)
+	var podList *k8sv1.PodList
+	var err error
+
+	switch {
+	case decorators.HasLabel(specReport, decorators.RetainPods):
+		return
+	case decorators.HasLabelWithPrefix(specReport, decorators.RetainPodsWithLabelKey):
+		k, v, err := decorators.RetainPodsLabelSelector(specReport)
+		util.PanicOnError(err)
+		filterOutPodsLabel := fmt.Sprintf("%s!=%s", k, v)
+		podList, err = virtCli.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: filterOutPodsLabel})
+		util.PanicOnError(err)
+	case decorators.HasLabel(specReport, decorators.RetainVirtualMachineInstances):
+		filterOutPodsLabel := fmt.Sprintf("kubevirt.io!=virt-launcher")
+		podList, err = virtCli.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: filterOutPodsLabel})
+		util.PanicOnError(err)
+	default:
+		podList, err = virtCli.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+		util.PanicOnError(err)
+	}
 
 	var gracePeriod int64 = 0
 	for _, pod := range podList.Items {
@@ -252,7 +277,11 @@ func deletePods(namespace string) {
 	}
 }
 
-func deleteNetworkAttachmentDefinitions(namespace string) {
+func deleteNetworkAttachmentDefinitions(specReport SpecReport, namespace string) {
+	if decorators.HasLabel(specReport, decorators.RetainNetworkAttachmentDefinitions) {
+		return
+	}
+
 	virtCli := kubevirt.Client()
 	nets, err := virtCli.NetworkClient().K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil && !errors.IsNotFound(err) {
