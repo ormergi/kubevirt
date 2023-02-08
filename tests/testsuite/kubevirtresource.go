@@ -104,7 +104,6 @@ func AdjustKubeVirtResource() {
 		virtconfig.PasstGate,
 		virtconfig.ExpandDisksGate,
 		virtconfig.WorkloadEncryptionSEV,
-		virtconfig.VMExportGate,
 		virtconfig.VSOCKGate,
 		virtconfig.KubevirtSeccompProfile,
 		virtconfig.PSASeccompAllowsUserfaultfd,
