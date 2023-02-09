@@ -21,6 +21,7 @@ import (
 	virtv1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
 
+	"kubevirt.io/kubevirt/pkg/network/namescheme"
 	"kubevirt.io/kubevirt/pkg/virtctl/templates"
 )
 
@@ -175,6 +176,7 @@ func (o *Command) RunE(args []string) error {
 		// remove unwanted labels
 		delete(serviceSelector, "kubevirt.io/nodeName")
 		delete(serviceSelector, virtv1.VirtualMachinePoolRevisionName)
+		delete(serviceSelector, namescheme.NetworkNameSchemeLabel)
 	case "vm", "vms", "virtualmachine", "virtualmachines":
 		// get the VM
 		vm, err := virtClient.VirtualMachine(namespace).Get(vmName, &options)
