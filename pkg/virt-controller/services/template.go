@@ -273,6 +273,10 @@ func (t *templateService) RenderMigrationManifest(vmi *v1.VirtualMachineInstance
 		}
 		podManifest.Spec.SecurityContext.SeccompProfile.Type = k8sv1.SeccompProfileTypeUnconfined
 	}
+
+	// the target migration pod networks should be the same as the source
+	podManifest.Annotations[MultusNetworksAnnotation] = pod.Annotations[MultusNetworksAnnotation]
+
 	return podManifest, err
 }
 

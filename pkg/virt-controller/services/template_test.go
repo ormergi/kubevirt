@@ -1067,6 +1067,43 @@ var _ = Describe("Template", func() {
 					"]")
 				Expect(value).To(Equal(expectedIfaces))
 			})
+			It("migration target pod manifest, should add the source migration pod Multus networks annotation", func() {
+				vmi := &v1.VirtualMachineInstance{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "testvmi",
+						Namespace: "default",
+						UID:       "1234",
+					},
+					Spec: v1.VirtualMachineInstanceSpec{
+						Domain: v1.DomainSpec{
+							Devices: v1.Devices{
+								DisableHotplug: true,
+							},
+						},
+						Networks: []v1.Network{
+							{Name: "default",
+								NetworkSource: v1.NetworkSource{
+									Multus: &v1.MultusNetwork{NetworkName: "default"},
+								}},
+							{Name: "test1",
+								NetworkSource: v1.NetworkSource{
+									Multus: &v1.MultusNetwork{NetworkName: "test1"},
+								}},
+							{Name: "other-test1",
+								NetworkSource: v1.NetworkSource{
+									Multus: &v1.MultusNetwork{NetworkName: "other-namespace/test1"},
+								}},
+						},
+					},
+				}
+				pod, err := svc.RenderLaunchManifest(vmi)
+				Expect(err).ToNot(HaveOccurred())
+
+				targetPod, err := svc.RenderMigrationManifest(vmi, pod, &v1.MigrationConfiguration{})
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(pod.Annotations[MultusNetworksAnnotation]).To(Equal(targetPod.Annotations[MultusNetworksAnnotation]))
+			})
 		})
 		Context("with masquerade interface", func() {
 			It("should add the istio annotation", func() {
