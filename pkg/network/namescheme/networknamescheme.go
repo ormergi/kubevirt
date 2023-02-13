@@ -61,3 +61,27 @@ func hashNetworkName(networkName string) string {
 	_, _ = io.WriteString(hash, networkName)
 	return fmt.Sprintf("%x", hash.Sum(nil))[:MaxIfaceNameLen]
 }
+
+// CreateCombinedNetworkNameScheme iterates over the VMI's Networks, and creates for each a pod interface a list of its
+// names of two forms, index name (net1,net2,...,netX) and a hash name ("net<id>" where id is the network name sha256).
+// The returned map associates between the network name and the generated pod interface names.
+// Primary network will use "eth0".
+func CreateCombinedNetworkNameScheme(networks []v1.Network) map[string][]string {
+	networkNameSchemeMap := map[string][]string{}
+	for i, network := range vmispec.FilterMultusNonDefaultNetworks(networks) {
+		networkNameSchemeMap[network.Name] = []string{
+			secondaryInterfaceIndexedName(i + 1),
+			hashNetworkName(network.Name),
+		}
+	}
+	if multusDefaultNetwork := vmispec.LookUpDefaultNetwork(networks); multusDefaultNetwork != nil {
+		networkNameSchemeMap[multusDefaultNetwork.Name] = []string{PrimaryPodInterfaceName}
+	}
+	return networkNameSchemeMap
+}
+
+const interfaceNamePrefix = "net"
+
+func secondaryInterfaceIndexedName(idx int) string {
+	return fmt.Sprintf("%s%d", interfaceNamePrefix, idx)
+}

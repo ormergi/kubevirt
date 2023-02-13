@@ -26,6 +26,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 
@@ -61,6 +62,7 @@ const (
 
 type NetworkHandler interface {
 	LinkByName(name string) (netlink.Link, error)
+	LinkByNames(name []string) (netlink.Link, error)
 	AddrList(link netlink.Link, family int) ([]netlink.Addr, error)
 	ReadIPAddressesFromLink(interfaceName string) (string, string, error)
 	RouteList(link netlink.Link, family int) ([]netlink.Route, error)
@@ -103,6 +105,19 @@ func (h *NetworkUtilsHandler) LinkSetHardwareAddr(link netlink.Link, hwaddr net.
 func (h *NetworkUtilsHandler) LinkByName(name string) (netlink.Link, error) {
 	return netlink.LinkByName(name)
 }
+
+func (h *NetworkUtilsHandler) LinkByNames(names []string) (netlink.Link, error) {
+	var errs []string
+	for _, name := range names {
+		link, err := h.LinkByName(name)
+		if err == nil {
+			return link, nil
+		}
+		errs = append(errs, err.Error())
+	}
+	return nil, fmt.Errorf("link not found: %v", strings.Join(errs, ", "))
+}
+
 func (h *NetworkUtilsHandler) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
 	return netlink.AddrList(link, family)
 }

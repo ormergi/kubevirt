@@ -22,7 +22,6 @@ package namescheme_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	virtv1 "kubevirt.io/api/core/v1"
 
 	"kubevirt.io/kubevirt/pkg/network/namescheme"
@@ -55,6 +54,38 @@ var _ = Describe("Network Name Scheme", func() {
 					"network1": "a7662f44d65",
 					"network2": "27f4a77f94e",
 				}),
+		)
+	})
+	Context("CreateCombinedNetworkNameScheme", func() {
+		DescribeTable("should return the expected NetworkNameSchemeMap",
+			func(labels map[string]string, networkList []virtv1.Network, expectedNetworkNameSchemeMap map[string][]string) {
+				podIfacesNameScheme := namescheme.CreateCombinedNetworkNameScheme(networkList)
+
+				Expect(podIfacesNameScheme).To(Equal(expectedNetworkNameSchemeMap))
+			},
+			Entry("when network list is nil", nil, nil, map[string][]string{}),
+			Entry("when no multus networks exist",
+				nil,
+				[]virtv1.Network{
+					newPodNetwork("default"),
+				},
+				map[string][]string{
+					"default": {namescheme.PrimaryPodInterfaceName},
+				},
+			),
+			Entry("when default multus networks exist",
+				nil,
+				[]virtv1.Network{
+					createMultusDefaultNetwork("network0", "default/nad0"),
+					createMultusSecondaryNetwork("network1", "default/nad1"),
+					createMultusSecondaryNetwork("network2", "default/nad2"),
+				},
+				map[string][]string{
+					"network0": {namescheme.PrimaryPodInterfaceName},
+					"network1": {"net1", "a7662f44d65"},
+					"network2": {"net2", "27f4a77f94e"},
+				},
+			),
 		)
 	})
 })

@@ -21,11 +21,10 @@ package network
 
 import (
 	"fmt"
-	"os"
-
 	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/log"
 	"kubevirt.io/client-go/precond"
+	"os"
 
 	goerrors "errors"
 
@@ -108,10 +107,15 @@ func newPodNIC(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netd
 		return nil, fmt.Errorf("no iface matching with network %s", network.Name)
 	}
 
-	networkNameScheme := namescheme.CreateNetworkNameScheme(vmi.Spec.Networks)
-	podInterfaceName, exists := networkNameScheme[network.Name]
-	if !exists {
-		return nil, fmt.Errorf("pod interface name not found for network %s", network.Name)
+	networkNameScheme := namescheme.CreateCombinedNetworkNameScheme(vmi.Spec.Networks)
+	podInterfaceNames, exist := networkNameScheme[network.Name]
+	if !exist {
+		return nil, fmt.Errorf("pod interface names not found for network %s", network.Name)
+	}
+
+	podIfaceLink, err := handler.LinkByNames(podInterfaceNames)
+	if err != nil {
+		return nil, fmt.Errorf("pod interface net-link not found for network %s: %v", network.Name, err)
 	}
 
 	return &podNIC{
@@ -119,7 +123,7 @@ func newPodNIC(vmi *v1.VirtualMachineInstance, network *v1.Network, handler netd
 		handler:          handler,
 		vmi:              vmi,
 		vmiSpecNetwork:   network,
-		podInterfaceName: podInterfaceName,
+		podInterfaceName: podIfaceLink.Attrs().Name,
 		vmiSpecIface:     correspondingNetworkIface,
 		launcherPID:      launcherPID,
 	}, nil
