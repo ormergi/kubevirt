@@ -161,470 +161,482 @@ var _ = SIGDescribe("[rfe_id:253][crit:medium][vendor:cnv-qe@redhat.com][level:c
 		}
 	}
 
-	Context("Expose service on a VM", func() {
-		var tcpVM *v1.VirtualMachineInstance
-		BeforeEach(func() {
-			tcpVM = newLabeledVMI("vm")
-			tcpVM = tests.RunVMIAndExpectLaunch(tcpVM, 180)
-			tests.GenerateHelloWorldServer(tcpVM, testPort, "tcp", console.LoginToAlpine, false)
-		})
-
-		Context("Expose ClusterIP service", func() {
-			const servicePort = "27017"
-			const serviceNamePrefix = "cluster-ip-vmi"
-
-			var serviceName string
-			var vmiExposeArgs []string
-
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)))
+	Context("Expose service on a VM",
+		Ordered,
+		ContinueOnFailure,
+		decorators.RetainVirtualMachineInstances,
+		func() {
+			var tcpVM *v1.VirtualMachineInstance
+			BeforeAll(func() {
+				tcpVM = newLabeledVMI("vm")
+				tcpVM = tests.RunVMIAndExpectLaunch(tcpVM, 180)
+				tests.GenerateHelloWorldServer(tcpVM, testPort, "tcp", console.LoginToAlpine, false)
 			})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Should expose a Cluster IP service on a VMI and connect to it", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose ClusterIP service", func() {
+				const servicePort = "27017"
+				const serviceNamePrefix = "cluster-ip-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By(gettingValidatingClusterIP)
-				svc, err := getService(tcpVM.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)))
+				})
 
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, tcpVM.Namespace, tests.NewHelloWorldJobTCP)
-			},
-				Entry("[test_id:1531] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
+				DescribeTable("[label:masquerade_binding_connectivity]Should expose a Cluster IP service on a VMI and connect to it", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-		Context("Expose ClusterIP service with string target-port", func() {
-			const servicePort = "27017"
-			const serviceNamePrefix = "cluster-ip-target-vmi"
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-			var serviceName string
-			var vmiExposeArgs []string
+					By(gettingValidatingClusterIP)
+					svc, err := getService(tcpVM.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort("http"))
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, tcpVM.Namespace, tests.NewHelloWorldJobTCP)
+				},
+					Entry("[test_id:1531] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
 			})
 
-			DescribeTable("Should expose a ClusterIP service and connect to the vm on port 80", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose ClusterIP service with string target-port", func() {
+				const servicePort = "27017"
+				const serviceNamePrefix = "cluster-ip-target-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By("Waiting for kubernetes to create the relevant endpoint")
-				getEndpoint := func() error {
-					_, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
-					return err
-				}
-				Eventually(getEndpoint, 60, 1).Should(BeNil())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort("http"))
+				})
 
-				endpoints, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred())
+				DescribeTable("Should expose a ClusterIP service and connect to the vm on port 80", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-				Expect(endpoints.Subsets).To(HaveLen(1))
-				endpoint := endpoints.Subsets[0]
-				Expect(endpoint.Ports).To(HaveLen(1))
-				Expect(endpoint.Ports[0].Port).To(Equal(int32(80)))
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-				endpointSlices, err := virtClient.DiscoveryV1().EndpointSlices(testsuite.GetTestNamespace(nil)).List(context.Background(), metav1.ListOptions{})
-				Expect(err).ToNot(HaveOccurred())
-
-				numOfExpectedAddresses := 1
-				addresses := []string{}
-				isDualStack := isDualStack(ipFamily)
-				if isDualStack {
-					numOfExpectedAddresses = 2
-				}
-
-				for _, endpointSlice := range endpointSlices.Items {
-					for _, endpoint := range endpointSlice.Endpoints {
-						addresses = append(addresses, endpoint.Addresses...)
+					By("Waiting for kubernetes to create the relevant endpoint")
+					getEndpoint := func() error {
+						_, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
+						return err
 					}
-				}
-				Expect(addresses).To(HaveLen(numOfExpectedAddresses))
-			},
-				Entry("[test_id:1532] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
+					Eventually(getEndpoint, 60, 1).Should(BeNil())
 
-		Context("Expose ClusterIP service with ports on the vmi defined", func() {
-			const serviceNamePrefix = "cluster-ip-target-multiple-ports-vmi"
+					endpoints, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred())
 
-			var serviceName string
-			var vmiExposeArgs []string
+					Expect(endpoints.Subsets).To(HaveLen(1))
+					endpoint := endpoints.Subsets[0]
+					Expect(endpoint.Ports).To(HaveLen(1))
+					Expect(endpoint.Ports[0].Port).To(Equal(int32(80)))
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
-					libnet.WithServiceName(serviceName))
+					endpointSlices, err := virtClient.DiscoveryV1().EndpointSlices(testsuite.GetTestNamespace(nil)).List(context.Background(), metav1.ListOptions{})
+					Expect(err).ToNot(HaveOccurred())
+
+					numOfExpectedAddresses := 1
+					addresses := []string{}
+					isDualStack := isDualStack(ipFamily)
+					if isDualStack {
+						numOfExpectedAddresses = 2
+					}
+
+					for _, endpointSlice := range endpointSlices.Items {
+						for _, endpoint := range endpointSlice.Endpoints {
+							addresses = append(addresses, endpoint.Addresses...)
+						}
+					}
+					Expect(addresses).To(HaveLen(numOfExpectedAddresses))
+				},
+					Entry("[test_id:1532] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
 			})
 
-			DescribeTable("Should expose a ClusterIP service and connect to all ports defined on the vmi", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose ClusterIP service with ports on the vmi defined", func() {
+				const serviceNamePrefix = "cluster-ip-target-multiple-ports-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By("Waiting for kubernetes to create the relevant endpoint")
-				getEndpoint := func() error {
-					_, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
-					return err
-				}
-				Eventually(getEndpoint, 60, 1).Should(BeNil())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
+						libnet.WithServiceName(serviceName))
+				})
 
-				endpoints, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred())
+				DescribeTable("Should expose a ClusterIP service and connect to all ports defined on the vmi", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-				Expect(endpoints.Subsets).To(HaveLen(1))
-				endpoint := endpoints.Subsets[0]
-				Expect(endpoint.Ports).To(HaveLen(4))
-				Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-1", Port: 80, Protocol: "TCP"}))
-				Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-2", Port: 1500, Protocol: "TCP"}))
-				Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-3", Port: 82, Protocol: "UDP"}))
-				Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-4", Port: 1500, Protocol: "UDP"}))
-			},
-				Entry("[test_id:1533] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-		Context("Expose ClusterIP service with IPFamilyPolicy", func() {
-			const serviceNamePrefix = "cluster-ip-with-ip-family-policy"
+					By("Waiting for kubernetes to create the relevant endpoint")
+					getEndpoint := func() error {
+						_, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
+						return err
+					}
+					Eventually(getEndpoint, 60, 1).Should(BeNil())
 
-			var serviceName string
-			var vmiExposeArgs []string
+					endpoints, err := virtClient.CoreV1().Endpoints(testsuite.GetTestNamespace(nil)).Get(context.Background(), serviceName, k8smetav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred())
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
-					libnet.WithServiceName(serviceName))
+					Expect(endpoints.Subsets).To(HaveLen(1))
+					endpoint := endpoints.Subsets[0]
+					Expect(endpoint.Ports).To(HaveLen(4))
+					Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-1", Port: 80, Protocol: "TCP"}))
+					Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-2", Port: 1500, Protocol: "TCP"}))
+					Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-3", Port: 82, Protocol: "UDP"}))
+					Expect(endpoint.Ports).To(ContainElement(k8sv1.EndpointPort{Name: "port-4", Port: 1500, Protocol: "UDP"}))
+				},
+					Entry("[test_id:1533] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
 			})
 
-			DescribeTable("Should expose a ClusterIP service with the correct IPFamilyPolicy", func(ipFamiyPolicy k8sv1.IPFamilyPolicyType) {
-				checks.SkipIfVersionBelow("IPFamilyPolicy property on a service requires v1.20 and above", "1.20")
+			Context("Expose ClusterIP service with IPFamilyPolicy", func() {
+				const serviceNamePrefix = "cluster-ip-with-ip-family-policy"
 
-				if ipFamiyPolicy == k8sv1.IPFamilyPolicyRequireDualStack {
-					libnet.SkipWhenNotDualStackCluster()
-				}
+				var serviceName string
+				var vmiExposeArgs []string
 
-				calcNumOfClusterIPs := func() int {
-					switch ipFamiyPolicy {
-					case k8sv1.IPFamilyPolicySingleStack:
-						return 1
-					case k8sv1.IPFamilyPolicyPreferDualStack:
-						isClusterDualStack, err := cluster.DualStack()
-						ExpectWithOffset(1, err).NotTo(HaveOccurred(), "should have been able to infer if the cluster is dual stack")
-						if isClusterDualStack {
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
+						libnet.WithServiceName(serviceName))
+				})
+
+				DescribeTable("Should expose a ClusterIP service with the correct IPFamilyPolicy", func(ipFamiyPolicy k8sv1.IPFamilyPolicyType) {
+					checks.SkipIfVersionBelow("IPFamilyPolicy property on a service requires v1.20 and above", "1.20")
+
+					if ipFamiyPolicy == k8sv1.IPFamilyPolicyRequireDualStack {
+						libnet.SkipWhenNotDualStackCluster()
+					}
+
+					calcNumOfClusterIPs := func() int {
+						switch ipFamiyPolicy {
+						case k8sv1.IPFamilyPolicySingleStack:
+							return 1
+						case k8sv1.IPFamilyPolicyPreferDualStack:
+							isClusterDualStack, err := cluster.DualStack()
+							ExpectWithOffset(1, err).NotTo(HaveOccurred(), "should have been able to infer if the cluster is dual stack")
+							if isClusterDualStack {
+								return 2
+							}
+							return 1
+						case k8sv1.IPFamilyPolicyRequireDualStack:
 							return 2
 						}
-						return 1
-					case k8sv1.IPFamilyPolicyRequireDualStack:
-						return 2
+						return 0
 					}
-					return 0
-				}
 
-				vmiExposeArgs = append(vmiExposeArgs, "--ip-family-policy", string(ipFamiyPolicy))
+					vmiExposeArgs = append(vmiExposeArgs, "--ip-family-policy", string(ipFamiyPolicy))
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-				By("Getting the service")
-				svc, err := getService(tcpVM.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
+					By("Getting the service")
+					svc, err := getService(tcpVM.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
 
-				By("Validating the num of cluster ips")
-				Expect(svc.Spec.ClusterIPs).To(HaveLen(calcNumOfClusterIPs()))
-			},
-				Entry("over SingleStack IP family policy", k8sv1.IPFamilyPolicySingleStack),
-				Entry("over PreferDualStack IP family policy", k8sv1.IPFamilyPolicyPreferDualStack),
-				Entry("over RequireDualStack IP family policy", k8sv1.IPFamilyPolicyRequireDualStack),
-			)
-		})
-
-		Context("Expose NodePort service", func() {
-			const servicePort = "27017"
-			const serviceNamePrefix = "node-port-vmi"
-
-			var serviceName string
-			var vmiExposeArgs []string
-
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)),
-					libnet.WithType("NodePort"))
+					By("Validating the num of cluster ips")
+					Expect(svc.Spec.ClusterIPs).To(HaveLen(calcNumOfClusterIPs()))
+				},
+					Entry("over SingleStack IP family policy", k8sv1.IPFamilyPolicySingleStack),
+					Entry("over PreferDualStack IP family policy", k8sv1.IPFamilyPolicyPreferDualStack),
+					Entry("over RequireDualStack IP family policy", k8sv1.IPFamilyPolicyRequireDualStack),
+				)
 			})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Should expose a NodePort service on a VMI and connect to it", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose NodePort service", func() {
+				const servicePort = "27017"
+				const serviceNamePrefix = "node-port-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By("Getting the service")
-				svc, err := getService(tcpVM.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(tcpVM,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)),
+						libnet.WithType("NodePort"))
+				})
 
-				nodePort := svc.Spec.Ports[0].NodePort
-				Expect(nodePort).To(BeNumerically(">", 0))
+				DescribeTable("[label:masquerade_binding_connectivity]Should expose a NodePort service on a VMI and connect to it", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-				By("Getting the node IP from all nodes")
-				nodes, err := virtClient.CoreV1().Nodes().List(context.Background(), k8smetav1.ListOptions{})
-				Expect(err).ToNot(HaveOccurred())
-				Expect(nodes.Items).ToNot(BeEmpty())
-				for _, node := range nodes.Items {
-					Expect(node.Status.Addresses).ToNot(BeEmpty())
-					nodeIP := node.Status.Addresses[0].Address
-					var ipv6NodeIP string
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-					if includesIpv4(ipFamily) {
-						By("Connecting to IPv4 node IP")
-						Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobTCP, tcpVM.Namespace, nodeIP, strconv.Itoa(int(nodePort)), fmt.Sprintf("NodePort using %s node ip", ipFamily))).To(Succeed())
+					By("Getting the service")
+					svc, err := getService(tcpVM.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+
+					nodePort := svc.Spec.Ports[0].NodePort
+					Expect(nodePort).To(BeNumerically(">", 0))
+
+					By("Getting the node IP from all nodes")
+					nodes, err := virtClient.CoreV1().Nodes().List(context.Background(), k8smetav1.ListOptions{})
+					Expect(err).ToNot(HaveOccurred())
+					Expect(nodes.Items).ToNot(BeEmpty())
+					for _, node := range nodes.Items {
+						Expect(node.Status.Addresses).ToNot(BeEmpty())
+						nodeIP := node.Status.Addresses[0].Address
+						var ipv6NodeIP string
+
+						if includesIpv4(ipFamily) {
+							By("Connecting to IPv4 node IP")
+							Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobTCP, tcpVM.Namespace, nodeIP, strconv.Itoa(int(nodePort)), fmt.Sprintf("NodePort using %s node ip", ipFamily))).To(Succeed())
+						}
+						if inlcudesIpv6(ipFamily) {
+							launcher, err := libvmi.GetPodByVirtualMachineInstance(tcpVM, tcpVM.GetNamespace())
+							Expect(err).ToNot(HaveOccurred())
+							ipv6NodeIP, err = resolveNodeIPAddrByFamily(
+								virtClient,
+								launcher,
+								node,
+								k8sv1.IPv6Protocol)
+							Expect(err).NotTo(HaveOccurred(), "must have been able to resolve an IP address from the node name")
+							Expect(ipv6NodeIP).NotTo(BeEmpty(), "must have been able to resolve the IPv6 address of the node")
+
+							By("Connecting to IPv6 node IP")
+							Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobTCP, tcpVM.Namespace, ipv6NodeIP, strconv.Itoa(int(nodePort)), fmt.Sprintf("NodePort using %s node ip", ipFamily))).To(Succeed())
+						}
 					}
-					if inlcudesIpv6(ipFamily) {
-						launcher, err := libvmi.GetPodByVirtualMachineInstance(tcpVM, tcpVM.GetNamespace())
-						Expect(err).ToNot(HaveOccurred())
-						ipv6NodeIP, err = resolveNodeIPAddrByFamily(
-							virtClient,
-							launcher,
-							node,
-							k8sv1.IPv6Protocol)
-						Expect(err).NotTo(HaveOccurred(), "must have been able to resolve an IP address from the node name")
-						Expect(ipv6NodeIP).NotTo(BeEmpty(), "must have been able to resolve the IPv6 address of the node")
-
-						By("Connecting to IPv6 node IP")
-						Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobTCP, tcpVM.Namespace, ipv6NodeIP, strconv.Itoa(int(nodePort)), fmt.Sprintf("NodePort using %s node ip", ipFamily))).To(Succeed())
-					}
-				}
-			},
-				Entry("[test_id:1534] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
-	})
-
-	Context("Expose UDP service on a VMI", func() {
-		var udpVM *v1.VirtualMachineInstance
-		BeforeEach(func() {
-			udpVM = newLabeledVMI("udp-vm")
-			udpVM = tests.RunVMIAndExpectLaunch(udpVM, 180)
-			tests.GenerateHelloWorldServer(udpVM, testPort, "udp", console.LoginToAlpine, false)
+				},
+					Entry("[test_id:1534] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
+			})
 		})
 
-		Context("Expose ClusterIP UDP service", func() {
-			const servicePort = "28017"
-			const serviceNamePrefix = "cluster-ip-udp-vmi"
-
-			var serviceName string
-			var vmiExposeArgs []string
-
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(udpVM,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)),
-					libnet.WithProtocol("UDP"))
+	Context("Expose UDP service on a VMI",
+		Ordered,
+		ContinueOnFailure,
+		decorators.RetainVirtualMachineInstances,
+		func() {
+			var udpVM *v1.VirtualMachineInstance
+			BeforeAll(func() {
+				udpVM = newLabeledVMI("udp-vm")
+				udpVM = tests.RunVMIAndExpectLaunch(udpVM, 180)
+				tests.GenerateHelloWorldServer(udpVM, testPort, "udp", console.LoginToAlpine, false)
 			})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Should expose a ClusterIP service on a VMI and connect to it", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose ClusterIP UDP service", func() {
+				const servicePort = "28017"
+				const serviceNamePrefix = "cluster-ip-udp-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By(gettingValidatingClusterIP)
-				svc, err := getService(udpVM.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(udpVM,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)),
+						libnet.WithProtocol("UDP"))
+				})
 
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, udpVM.Namespace, tests.NewHelloWorldJobUDP)
-			},
-				Entry("[test_id:1535] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
+				DescribeTable("[label:masquerade_binding_connectivity]Should expose a ClusterIP service on a VMI and connect to it", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-		Context("Expose NodePort UDP service", func() {
-			const servicePort = "29017"
-			const serviceNamePrefix = "node-port-udp-vmi"
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-			var serviceName string
-			var vmiExposeArgs []string
+					By(gettingValidatingClusterIP)
+					svc, err := getService(udpVM.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmiExposeArgs = libnet.NewVMIExposeArgs(udpVM,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)),
-					libnet.WithType("NodePort"),
-					libnet.WithProtocol("UDP"))
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, udpVM.Namespace, tests.NewHelloWorldJobUDP)
+				},
+					Entry("[test_id:1535] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
 			})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Should expose a NodePort service on a VMI and connect to it", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
+			Context("Expose NodePort UDP service", func() {
+				const servicePort = "29017"
+				const serviceNamePrefix = "node-port-udp-vmi"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmiExposeArgs []string
 
-				By(gettingValidatingClusterIP)
-				svc, err := getService(udpVM.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmiExposeArgs = libnet.NewVMIExposeArgs(udpVM,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)),
+						libnet.WithType("NodePort"),
+						libnet.WithProtocol("UDP"))
+				})
 
-				nodePort := svc.Spec.Ports[0].NodePort
-				Expect(nodePort).To(BeNumerically(">", 0))
+				DescribeTable("[label:masquerade_binding_connectivity]Should expose a NodePort service on a VMI and connect to it", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmiExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmiExposeArgs)
 
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, udpVM.Namespace, tests.NewHelloWorldJobUDP)
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmiExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-				By("Getting the node IP from all nodes")
-				nodes, err := virtClient.CoreV1().Nodes().List(context.Background(), k8smetav1.ListOptions{})
-				Expect(err).ToNot(HaveOccurred())
-				Expect(nodes.Items).ToNot(BeEmpty())
-				for _, node := range nodes.Items {
-					Expect(node.Status.Addresses).ToNot(BeEmpty())
-					nodeIP := node.Status.Addresses[0].Address
-					var ipv6NodeIP string
-					if inlcudesIpv6(ipFamily) {
-						launcher, err := libvmi.GetPodByVirtualMachineInstance(udpVM, udpVM.GetNamespace())
-						Expect(err).ToNot(HaveOccurred())
-						ipv6NodeIP, err = resolveNodeIPAddrByFamily(
-							virtClient,
-							launcher,
-							node,
-							k8sv1.IPv6Protocol)
-						Expect(err).NotTo(HaveOccurred(), "must have been able to resolve an IP address from the node name")
-						Expect(ipv6NodeIP).NotTo(BeEmpty(), "must have been able to resolve the IPv6 address of the node")
+					By(gettingValidatingClusterIP)
+					svc, err := getService(udpVM.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
+
+					nodePort := svc.Spec.Ports[0].NodePort
+					Expect(nodePort).To(BeNumerically(">", 0))
+
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, udpVM.Namespace, tests.NewHelloWorldJobUDP)
+
+					By("Getting the node IP from all nodes")
+					nodes, err := virtClient.CoreV1().Nodes().List(context.Background(), k8smetav1.ListOptions{})
+					Expect(err).ToNot(HaveOccurred())
+					Expect(nodes.Items).ToNot(BeEmpty())
+					for _, node := range nodes.Items {
+						Expect(node.Status.Addresses).ToNot(BeEmpty())
+						nodeIP := node.Status.Addresses[0].Address
+						var ipv6NodeIP string
+						if inlcudesIpv6(ipFamily) {
+							launcher, err := libvmi.GetPodByVirtualMachineInstance(udpVM, udpVM.GetNamespace())
+							Expect(err).ToNot(HaveOccurred())
+							ipv6NodeIP, err = resolveNodeIPAddrByFamily(
+								virtClient,
+								launcher,
+								node,
+								k8sv1.IPv6Protocol)
+							Expect(err).NotTo(HaveOccurred(), "must have been able to resolve an IP address from the node name")
+							Expect(ipv6NodeIP).NotTo(BeEmpty(), "must have been able to resolve the IPv6 address of the node")
+						}
+
+						if includesIpv4(ipFamily) {
+							By("Connecting to IPv4 node IP")
+							Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobUDP, udpVM.Namespace, nodeIP, strconv.Itoa(int(nodePort)), "NodePort ipv4 address")).To(Succeed())
+						}
+						if inlcudesIpv6(ipFamily) {
+							By("Connecting to IPv6 node IP")
+							Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobUDP, udpVM.Namespace, ipv6NodeIP, strconv.Itoa(int(nodePort)), "NodePort ipv6 address")).To(Succeed())
+						}
 					}
-
-					if includesIpv4(ipFamily) {
-						By("Connecting to IPv4 node IP")
-						Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobUDP, udpVM.Namespace, nodeIP, strconv.Itoa(int(nodePort)), "NodePort ipv4 address")).To(Succeed())
-					}
-					if inlcudesIpv6(ipFamily) {
-						By("Connecting to IPv6 node IP")
-						Expect(createAndWaitForJobToSucceed(tests.NewHelloWorldJobUDP, udpVM.Namespace, ipv6NodeIP, strconv.Itoa(int(nodePort)), "NodePort ipv6 address")).To(Succeed())
-					}
-				}
-			},
-				Entry("[test_id:1536] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
-	})
-
-	Context("Expose service on a VMI replica set", func() {
-		const numberOfVMs = 2
-
-		var vmrs *v1.VirtualMachineInstanceReplicaSet
-		BeforeEach(func() {
-			By("Creating a VMRS object with 2 replicas")
-			vmrs = tests.NewRandomReplicaSetFromVMI(newLabeledVMI("vmirs"), int32(numberOfVMs))
-			vmrs.Labels = map[string]string{"expose": "vmirs"}
-
-			By("Start the replica set")
-			vmrs, err = virtClient.ReplicaSet(testsuite.GetTestNamespace(nil)).Create(vmrs)
-			Expect(err).ToNot(HaveOccurred())
-
-			By("Checking the number of ready replicas")
-			Eventually(func() int {
-				rs, err := virtClient.ReplicaSet(testsuite.GetTestNamespace(nil)).Get(vmrs.ObjectMeta.Name, k8smetav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred())
-				return int(rs.Status.ReadyReplicas)
-			}, 120*time.Second, 1*time.Second).Should(Equal(numberOfVMs))
-
-			By("Add an 'hello world' server on each VMI in the replica set")
-			// TODO: add label to list options
-			// check size of list
-			// remove check for owner
-			vms, err := virtClient.VirtualMachineInstance(vmrs.ObjectMeta.Namespace).List(context.Background(), &k8smetav1.ListOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			for _, vm := range vms.Items {
-				if vm.OwnerReferences != nil {
-					tests.GenerateHelloWorldServer(&vm, testPort, "tcp", console.LoginToAlpine, false)
-				}
-			}
+				},
+					Entry("[test_id:1536] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
+			})
 		})
 
-		Context("Expose ClusterIP service", func() {
-			const servicePort = "27017"
-			const serviceNamePrefix = "cluster-ip-vmirs"
+	Context("Expose service on a VMI replica set",
+		Ordered,
+		ContinueOnFailure,
+		decorators.RetainVirtualMachineInstances,
+		func() {
+			const numberOfVMs = 2
 
-			var serviceName string
-			var vmirsExposeArgs []string
+			var vmrs *v1.VirtualMachineInstanceReplicaSet
+			BeforeAll(func() {
+				By("Creating a VMRS object with 2 replicas")
+				vmrs = tests.NewRandomReplicaSetFromVMI(newLabeledVMI("vmirs"), int32(numberOfVMs))
+				vmrs.Labels = map[string]string{"expose": "vmirs"}
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmirsExposeArgs = libnet.NewVMIRSExposeArgs(vmrs,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)))
+				By("Start the replica set")
+				vmrs, err = virtClient.ReplicaSet(testsuite.GetTestNamespace(nil)).Create(vmrs)
+				Expect(err).ToNot(HaveOccurred())
+
+				By("Checking the number of ready replicas")
+				Eventually(func() int {
+					rs, err := virtClient.ReplicaSet(testsuite.GetTestNamespace(nil)).Get(vmrs.ObjectMeta.Name, k8smetav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred())
+					return int(rs.Status.ReadyReplicas)
+				}, 120*time.Second, 1*time.Second).Should(Equal(numberOfVMs))
+
+				By("Add an 'hello world' server on each VMI in the replica set")
+				// TODO: add label to list options
+				// check size of list
+				// remove check for owner
+				vms, err := virtClient.VirtualMachineInstance(vmrs.ObjectMeta.Namespace).List(context.Background(), &k8smetav1.ListOptions{})
+				Expect(err).ToNot(HaveOccurred())
+				for _, vm := range vms.Items {
+					if vm.OwnerReferences != nil {
+						tests.GenerateHelloWorldServer(&vm, testPort, "tcp", console.LoginToAlpine, false)
+					}
+				}
 			})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Should create a ClusterIP service on VMRS and connect to it", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmirsExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmirsExposeArgs)
+			Context("Expose ClusterIP service", func() {
+				const servicePort = "27017"
+				const serviceNamePrefix = "cluster-ip-vmirs"
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmirsExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+				var serviceName string
+				var vmirsExposeArgs []string
 
-				By(gettingValidatingClusterIP)
-				svc, err := getService(vmrs.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmirsExposeArgs = libnet.NewVMIRSExposeArgs(vmrs,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)))
+				})
 
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, vmrs.Namespace, tests.NewHelloWorldJobTCP)
-			},
-				Entry("[test_id:1537] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
+				DescribeTable("[label:masquerade_binding_connectivity]Should create a ClusterIP service on VMRS and connect to it", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmirsExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmirsExposeArgs)
+
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmirsExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+
+					By(gettingValidatingClusterIP)
+					svc, err := getService(vmrs.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
+
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, vmrs.Namespace, tests.NewHelloWorldJobTCP)
+				},
+					Entry("[test_id:1537] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
+			})
 		})
-	})
 
 	Context("Expose a VM as a service.", func() {
 		const servicePort = "27017"
@@ -675,105 +687,109 @@ var _ = SIGDescribe("[rfe_id:253][crit:medium][vendor:cnv-qe@redhat.com][level:c
 			return vmi
 		}
 
-		Context("Expose a VM as a ClusterIP service.", func() {
-			var serviceName string
+		Context("Expose a VM as a ClusterIP service.",
+			Ordered,
+			ContinueOnFailure,
+			decorators.RetainVirtualMachineInstances,
+			func() {
+				var serviceName string
 
-			BeforeEach(func() {
-				vm, err = createStoppedVM(virtClient, testsuite.GetTestNamespace(nil))
-				Expect(err).NotTo(HaveOccurred(), "should create a stopped VM.")
-			})
+				BeforeAll(func() {
+					vm, err = createStoppedVM(virtClient, testsuite.GetTestNamespace(nil))
+					Expect(err).NotTo(HaveOccurred(), "should create a stopped VM.")
+				})
 
-			BeforeEach(func() {
-				serviceName = randomizeName(serviceNamePrefix)
-				vmExposeArgs = libnet.NewVMExposeArgs(vm,
-					libnet.WithPort(servicePort),
-					libnet.WithServiceName(serviceName),
-					libnet.WithTargetPort(strconv.Itoa(testPort)))
-			})
+				BeforeEach(func() {
+					serviceName = randomizeName(serviceNamePrefix)
+					vmExposeArgs = libnet.NewVMExposeArgs(vm,
+						libnet.WithPort(servicePort),
+						libnet.WithServiceName(serviceName),
+						libnet.WithTargetPort(strconv.Itoa(testPort)))
+				})
 
-			DescribeTable("[label:masquerade_binding_connectivity]Connect to ClusterIP service that was set when VM was offline.", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmExposeArgs)
+				DescribeTable("[label:masquerade_binding_connectivity]Connect to ClusterIP service that was set when VM was offline.", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmExposeArgs)
 
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
 
-				vmi := startVMWithServer(virtClient, "tcp", testPort)
-				Expect(vmi).NotTo(BeNil(), shouldStartVM)
+					vmi := startVMWithServer(virtClient, "tcp", testPort)
+					Expect(vmi).NotTo(BeNil(), shouldStartVM)
 
-				// This TC also covers:
-				// [test_id:1795] Exposed VM (as a service) can be reconnected multiple times.
-				By(gettingValidatingClusterIP)
-				svc, err := getService(vm.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
-
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, vm.Namespace, tests.NewHelloWorldJobTCP)
-			},
-				Entry("[test_id:1538] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-
-			DescribeTable("[label:masquerade_binding_connectivity]Should verify the exposed service is functional before and after VM restart.", func(ipFamily ipFamily) {
-				skipIfNotSupportedCluster(ipFamily)
-				vmExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmExposeArgs)
-
-				By("Exposing the service via virtctl command")
-				Expect(executeVirtctlExposeCommand(vmExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
-
-				vmi := startVMWithServer(virtClient, "tcp", testPort)
-				Expect(vmi).NotTo(BeNil(), shouldStartVM)
-
-				vmObj := vm
-
-				By(gettingValidatingClusterIP)
-				svc, err := getService(vmObj.Namespace, serviceName)
-				Expect(err).ToNot(HaveOccurred())
-				err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
-				Expect(err).ToNot(HaveOccurred())
-
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, vmObj.Namespace, tests.NewHelloWorldJobTCP)
-
-				// Retrieve the current VMI UID, to be compared with the new UID after restart.
-				vmi, err = virtClient.VirtualMachineInstance(vmObj.Namespace).Get(context.Background(), vmObj.Name, &k8smetav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred())
-				vmiUIdBeforeRestart := vmi.GetObjectMeta().GetUID()
-
-				By("Restarting the running VM.")
-				virtctl := clientcmd.NewRepeatableVirtctlCommand("restart", "--namespace", vmObj.Namespace, vmObj.Name)
-				err = virtctl()
-				Expect(err).ToNot(HaveOccurred())
-
-				By("Verifying the VMI is back up AFTER restart (in Running status with new UID).")
-				Eventually(func() bool {
-					vmi, err = virtClient.VirtualMachineInstance(vmObj.Namespace).Get(context.Background(), vmObj.Name, &k8smetav1.GetOptions{})
-					if errors.IsNotFound(err) {
-						return false
-					}
+					// This TC also covers:
+					// [test_id:1795] Exposed VM (as a service) can be reconnected multiple times.
+					By(gettingValidatingClusterIP)
+					svc, err := getService(vm.Namespace, serviceName)
 					Expect(err).ToNot(HaveOccurred())
-					vmiUIdAfterRestart := vmi.GetObjectMeta().GetUID()
-					newUId := vmiUIdAfterRestart != vmiUIdBeforeRestart
-					return vmi.Status.Phase == v1.Running && newUId
-				}, 120*time.Second, 1*time.Second).Should(BeTrue())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
 
-				By("Creating a TCP server on the VM.")
-				tests.GenerateHelloWorldServer(vmi, testPort, "tcp", console.LoginToAlpine, false)
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, vm.Namespace, tests.NewHelloWorldJobTCP)
+				},
+					Entry("[test_id:1538] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
 
-				By("Repeating the sequence as prior to restarting the VM: Connect to exposed ClusterIP service.")
-				By(iteratingClusterIPs)
-				runJobsAgainstService(svc, vmObj.Namespace, tests.NewHelloWorldJobTCP)
-			},
-				Entry("[test_id:345] over default IPv4 IP family", ipv4),
-				Entry(overIPv6Family, ipv6),
-				Entry(overDualStackIPv4, dualIPv4Primary),
-				Entry(overDualStackIPv6, dualIPv6Primary),
-			)
-		})
+				DescribeTable("[label:masquerade_binding_connectivity]Should verify the exposed service is functional before and after VM restart.", func(ipFamily ipFamily) {
+					skipIfNotSupportedCluster(ipFamily)
+					vmExposeArgs = appendIpFamilyToExposeArgs(ipFamily, vmExposeArgs)
+
+					By("Exposing the service via virtctl command")
+					Expect(executeVirtctlExposeCommand(vmExposeArgs)).To(Succeed(), shouldExposeServiceViaVirtctl)
+
+					vmi := startVMWithServer(virtClient, "tcp", testPort)
+					Expect(vmi).NotTo(BeNil(), shouldStartVM)
+
+					vmObj := vm
+
+					By(gettingValidatingClusterIP)
+					svc, err := getService(vmObj.Namespace, serviceName)
+					Expect(err).ToNot(HaveOccurred())
+					err = validateClusterIp(svc.Spec.ClusterIP, ipFamily)
+					Expect(err).ToNot(HaveOccurred())
+
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, vmObj.Namespace, tests.NewHelloWorldJobTCP)
+
+					// Retrieve the current VMI UID, to be compared with the new UID after restart.
+					vmi, err = virtClient.VirtualMachineInstance(vmObj.Namespace).Get(context.Background(), vmObj.Name, &k8smetav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred())
+					vmiUIdBeforeRestart := vmi.GetObjectMeta().GetUID()
+
+					By("Restarting the running VM.")
+					virtctl := clientcmd.NewRepeatableVirtctlCommand("restart", "--namespace", vmObj.Namespace, vmObj.Name)
+					err = virtctl()
+					Expect(err).ToNot(HaveOccurred())
+
+					By("Verifying the VMI is back up AFTER restart (in Running status with new UID).")
+					Eventually(func() bool {
+						vmi, err = virtClient.VirtualMachineInstance(vmObj.Namespace).Get(context.Background(), vmObj.Name, &k8smetav1.GetOptions{})
+						if errors.IsNotFound(err) {
+							return false
+						}
+						Expect(err).ToNot(HaveOccurred())
+						vmiUIdAfterRestart := vmi.GetObjectMeta().GetUID()
+						newUId := vmiUIdAfterRestart != vmiUIdBeforeRestart
+						return vmi.Status.Phase == v1.Running && newUId
+					}, 120*time.Second, 1*time.Second).Should(BeTrue())
+
+					By("Creating a TCP server on the VM.")
+					tests.GenerateHelloWorldServer(vmi, testPort, "tcp", console.LoginToAlpine, false)
+
+					By("Repeating the sequence as prior to restarting the VM: Connect to exposed ClusterIP service.")
+					By(iteratingClusterIPs)
+					runJobsAgainstService(svc, vmObj.Namespace, tests.NewHelloWorldJobTCP)
+				},
+					Entry("[test_id:345] over default IPv4 IP family", ipv4),
+					Entry(overIPv6Family, ipv6),
+					Entry(overDualStackIPv4, dualIPv4Primary),
+					Entry(overDualStackIPv6, dualIPv6Primary),
+				)
+			})
 	})
 })
 
