@@ -223,6 +223,9 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 						Eventually(func() bool {
 							return vmiPodInterfaceExistByName(testNewVM, expectedNewVMIPodIfaceName)
 						}, 1*time.Minute, 3*time.Second).Should(BeFalse(), "unpluged iface should not exist in pod")
+
+						By("TEST PASSED :)")
+						Expect(true).To(BeFalse(), "INJECT ERROR: DUMP ARTIFACTS")
 					})
 				})
 			})
