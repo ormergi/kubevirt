@@ -217,6 +217,8 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 						By("assert NEW VM unpluged interface not exist in pod")
 						Expect(vmiPodInterfaceExistByName(testNewVMI, expectedNewVMIPodIfaceName)).To(BeFalse(),
 							"unpluged iface should not exist in pod")
+
+						Expect(true).To(BeFalse(), "INJECT ERROR: DUMP ARTIFACTS")
 					})
 				})
 			})
