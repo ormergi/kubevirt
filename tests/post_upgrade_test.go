@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"kubevirt.io/kubevirt/tests"
-
-	"kubevirt.io/kubevirt/pkg/network/vmispec"
-
 	"k8s.io/apimachinery/pkg/api/errors"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -23,6 +19,7 @@ import (
 
 	kvv1 "kubevirt.io/api/core/v1"
 
+	"kubevirt.io/kubevirt/tests"
 	"kubevirt.io/kubevirt/tests/console"
 	"kubevirt.io/kubevirt/tests/flags"
 	"kubevirt.io/kubevirt/tests/framework/kubevirt"
@@ -32,208 +29,201 @@ import (
 	utils "kubevirt.io/kubevirt/tests/util"
 )
 
-// This test suite expects the deployed Kubevirt version to be as the given test suite '--previous-release-tag' flag.
-// It spin-up a VM with secondary NIC, upgrade KubeVirt to the target tested code, and verify the VM can be migrated
-// successfully following Kubevirt upgrade or by a user request.
-var _ = Describe("previous version Kubevirt with 'Migrate' workload update strategy",
-	Label("PostUpgrade"),
-	// enable using BeforeAll/AfterAll
-	Ordered,
-	// prevent from running these tests in parallel as setup/cleanup should occur once
-	Serial,
-	func() {
-		BeforeAll(func() {
-			kv := utils.GetCurrentKv(kubevirt.Client())
-			By("Verify kubevirt is from previous version")
-			Expect(kv.Status.ObservedKubeVirtVersion).To(Equal(flags.PreviousReleaseTag),
-				"Kubevirt version is not be equal to the version given by the tests suite parameter '--previous-release-tag'")
-			Expect(kv.Status.ObservedKubeVirtRegistry).To(Equal(flags.PreviousReleaseRegistry),
-				"Kubevirt images should be used from the registry given by the tests suite parameter '--previous-release-registry'")
-
-			By("Ensure kubevirt workload update strategy is 'Migrate'")
-			ensureKubeVirtMigrateWorkloadUpdateStrategy(kv)
-		})
-
-		BeforeEach(func() {
-			kv := utils.GetCurrentKv(kubevirt.Client())
-
-			By("Verify Kubevirt is deployed and ready")
-			assertKubeVirtIsReady(kv)
-
-			By("Verify Kubevirt workload update strategy is 'Migrate'")
-			Expect(kubevirtWorkloadUpdateStrategyIsMigrate(kv)).To(BeTrue())
-		})
-
-		Context("running virtual machine with multiple interfaces", func() {
-			// VM and net-attach-def is created once and reused in this context tests
-			const testNetAttachDefName = "bridge-network"
-			const testMacvtapNetAttachDefName = "macvtap-network"
-			var testBridgeNetAttachDef *cniv1.NetworkAttachmentDefinition
-			var testMacvtapNetAttachDef *cniv1.NetworkAttachmentDefinition
-			var testLegacyVMI *kvv1.VirtualMachineInstance
-
-			startVMI := func() *kvv1.VirtualMachineInstance {
-				opts := testVMIOptions(testNetAttachDefName, testMacvtapNetAttachDefName)
-				vmi := libvmi.NewFedora(opts...)
-				By(fmt.Sprintf("Starting [%s/%s] VM with two secondary interfaces (before upgrading Kubevirt)", utils.NamespaceTestDefault, vmi.Name))
-				vmi, err := kubevirt.Client().VirtualMachineInstance(utils.NamespaceTestDefault).Create(context.Background(), vmi)
-				Expect(err).ToNot(HaveOccurred())
-				libwait.WaitUntilVMIReady(vmi, console.LoginToFedora)
-				return vmi
-			}
-
-			deleteVMI := func(vmi *kvv1.VirtualMachineInstance) {
-				var getErr error
-				By(fmt.Sprintf("Deleting VMI '%s/%s'", vmi.Namespace, vmi.Name))
-				_ = kubevirt.Client().VirtualMachineInstance(vmi.Namespace).Delete(context.Background(), vmi.Name, &k8smetav1.DeleteOptions{})
-				Eventually(func() error {
-					_, getErr = kubevirt.Client().VirtualMachineInstance(vmi.Namespace).Get(context.Background(), vmi.Name, &k8smetav1.GetOptions{})
-					if errors.IsNotFound(getErr) {
-						return nil
-					}
-					return getErr
-				}, 30*time.Second, 1*time.Second).Should(Succeed())
-			}
-
-			migrateVMI := func(vmi *kvv1.VirtualMachineInstance) {
-				vmim := tests.NewRandomMigration(vmi.Name, vmi.Namespace)
-				vmim, err := kubevirt.Client().VirtualMachineInstanceMigration(vmi.Namespace).Create(vmim, &k8smetav1.CreateOptions{})
-				Expect(err).ToNot(HaveOccurred())
-				Eventually(kvmatcher.ThisMigration(vmim), 180*time.Second, 1*time.Second).Should(kvmatcher.HaveSucceeded())
-			}
-
-			const nodeMacvtapIfaceNamec = "eth0"
-			BeforeAll(func() {
-				testBridgeNetAttachDef = newBridgeNetworkAttachmentDefinition(testNetAttachDefName)
-				Expect(createNetAttachDef(utils.NamespaceTestDefault, testBridgeNetAttachDef)).To(Succeed())
-				DeferCleanup(func() {
-					_ = deleteNetAttachDef(utils.NamespaceTestDefault, testBridgeNetAttachDef.Name)
-				})
-				testMacvtapNetAttachDef = newMacvtapNetworkAttachmentDefinition(testMacvtapNetAttachDefName, nodeMacvtapIfaceNamec)
-				Expect(createNetAttachDef(utils.NamespaceTestDefault, testMacvtapNetAttachDef)).To(Succeed())
-				DeferCleanup(func() {
-					_ = deleteNetAttachDef(utils.NamespaceTestDefault, testMacvtapNetAttachDef.Name)
-				})
-				testLegacyVMI = startVMI()
-				DeferCleanup(func() {
-					deleteVMI(testLegacyVMI)
-				})
-			})
-
-			When("upgrading KubeVirt with 'Migrate' workloads update strategy", func() {
-				targetKubevirtVersion := flags.KubeVirtVersionTag
-				targetKubevirtRegistry := flags.KubeVirtRepoPrefix
-
-				BeforeAll(func() {
-					kv := utils.GetCurrentKv(kubevirt.Client())
-					By(fmt.Sprintf("Updating KubeVirt from [%q] to [%q] version", kv.Status.ObservedKubeVirtVersion, targetKubevirtVersion))
-					setKubeVirtVersionAndRegistry(kv.Name, targetKubevirtVersion, targetKubevirtRegistry)
-				})
-
-				BeforeEach(func() {
-					By("Verifying Kubevirt is updated to the version given by 'container-prefix' 'container-tag' test suite parameters")
-					kv := utils.GetCurrentKv(kubevirt.Client())
-					Expect(kv.Status.ObservedKubeVirtVersion).To(Equal(targetKubevirtVersion),
-						"Kubevirt version is not be equal to the version given by the tests suite parameter '--container-tag'")
-					Expect(kv.Status.ObservedKubeVirtRegistry).To(Equal(targetKubevirtRegistry),
-						"Kubevirt images should be used from the registry given by the tests suite parameter '--container-prefix'")
-				})
-
-				It("VM should migrate successfully", func() {
-					const migrationTrials = 3
-					By("Verifying LEGACY VMI migrated (following Kubevirt upgrade)")
-					assertVMIUpdated(testLegacyVMI.Namespace, testLegacyVMI.Name, migrationTrials)
-
-					By("migrating LEGACY VM again (using kubevirt client)")
-					migrateVMI(testLegacyVMI)
-
-					// new vmi hotplug
-					By("creating NEW VMI")
-					testNewVMI := startVMI()
-					DeferCleanup(func() {
-						deleteVMI(testNewVMI)
-					})
-
-					By("migrating NEW VM")
-					migrateVMI(testNewVMI)
-				})
-			})
-		})
+// This test suite expects the deployed Kubevirt version to be from previous version, given by test suite flag 'previous-release-tag'.
+// It spin-up a VM with secondary NICs, upgrade KubeVirt to the target version, given by the test suite flag 'container tag', and verifies:
+// - VM can migrate, w and w/o 'Migrate' WorkloadStrategy.
+// - VM can migrate upon user request.
+var _ = Describe("Kubevirt from previous version", func() {
+	BeforeEach(func() {
+		assertKubevirtIsPreviousVersion()
 	})
 
-func assertVMIHasPluggedIface(vmi *kvv1.VirtualMachineInstance, ifaceName string) *kvv1.VirtualMachineInstance {
-	virtClient := kubevirt.Client()
-	By(fmt.Sprintf("waiting for vmi [%s/%s] interface [%q] to attach and reflect on status", vmi.Namespace, vmi.Name, ifaceName))
-	var updatedVmi *kvv1.VirtualMachineInstance
-	Eventually(func() error {
-		var err error
-		updatedVmi, err = virtClient.VirtualMachineInstance(vmi.Namespace).Get(context.Background(), vmi.Name, &k8smetav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		for _, ifaceStatus := range updatedVmi.Status.Interfaces {
-			if ifaceStatus.Name == ifaceName &&
-				vmispec.ContainsInfoSource(ifaceStatus.InfoSource, vmispec.InfoSourceMultusStatus) &&
-				vmispec.ContainsInfoSource(ifaceStatus.InfoSource, vmispec.InfoSourceDomain) {
-				return nil
+	Context("with 'Migrate' workload update strategy",
+		Label("PostUpgradeMigrateStrategy"),
+		// enable using BeforeAll/AfterAll
+		Ordered,
+		// prevent from running tests in parallel because setup/teardown should occur once
+		Serial,
+		func() {
+			var migrateKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{
+				WorkloadUpdateMethods: []kvv1.WorkloadUpdateMethod{kvv1.WorkloadUpdateMethodLiveMigrate},
 			}
-		}
-		return fmt.Errorf("ifaceStatus is not ready")
-	}, 240*time.Second, 1*time.Second).Should(Succeed())
-	return updatedVmi
-}
 
-func assertVMIPodInterfaceExistByName(vmi *kvv1.VirtualMachineInstance, expectedIfaceName string) {
-	pod := getVMIRunningPod(vmi)
-	Expect(pod).ToNot(BeNil(), "should get '%s/%s' VMI running pod", vmi.Namespace, vmi.Name)
-
-	podAnnotations := pod.GetAnnotations()
-	Expect(podAnnotations).To(HaveKey(cniv1.NetworkStatusAnnot))
-
-	networkStatusAnnotationJSON := pod.ObjectMeta.Annotations[cniv1.NetworkStatusAnnot]
-	var podNetworkStatus []cniv1.NetworkStatus
-	Expect(json.Unmarshal([]byte(networkStatusAnnotationJSON), &podNetworkStatus)).To(Succeed())
-
-	foundExpectedIface := false
-	for _, networkStatus := range podNetworkStatus {
-		if networkStatus.Interface == expectedIfaceName {
-			foundExpectedIface = true
-			break
-		}
-	}
-	Expect(foundExpectedIface).To(BeTrue())
-
-	//Expect(podNetworkStatus).To(
-	//	ContainElement(
-	//		And(
-	//			WithTransform(getPodNetworkIfaceName, Equal(expectedPodNetworkIface)))))
-}
-
-func getVMIRunningPod(vmi *kvv1.VirtualMachineInstance) *k8scorev1.Pod {
-	newLegacyVMIPods, err := getPodsByLabel(string(vmi.GetUID()), kvv1.CreatedByLabel, vmi.Namespace)
-	Expect(err).ToNot(HaveOccurred())
-	for i := 0; i < len(newLegacyVMIPods.Items); i++ {
-		if newLegacyVMIPods.Items[i].Status.Phase == k8scorev1.PodRunning {
-			return &newLegacyVMIPods.Items[i]
-		}
-	}
-	return nil
-}
-
-func getPodsByLabel(label, labelType, namespace string) (*k8scorev1.PodList, error) {
-	virtCli := kubevirt.Client()
-	labelSelector := fmt.Sprintf("%s=%s", labelType, label)
-	pods, err := virtCli.CoreV1().Pods(namespace).List(context.Background(),
-		k8smetav1.ListOptions{LabelSelector: labelSelector},
+			testVMSurviveKubevirtUpgrade(migrateKubeVirtWorkloadUpdateStrategy)
+		},
 	)
-	if err != nil {
-		return nil, err
-	}
 
-	return pods, nil
+	Context("no workload update strategy",
+		Label("PostUpgrade"),
+		// enable using BeforeAll/AfterAll
+		Ordered,
+		// prevent from running tests in parallel because setup/teardown should occur once
+		Serial,
+		func() {
+			var emptyKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{
+				WorkloadUpdateMethods: []kvv1.WorkloadUpdateMethod{},
+			}
+
+			testVMSurviveKubevirtUpgrade(emptyKubeVirtWorkloadUpdateStrategy)
+		},
+	)
+})
+
+var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVirtWorkloadUpdateStrategy) {
+	Context(fmt.Sprintf("with workload strategy [%v]", testKVWorkloadUpdateStrategy),
+		Label("PostUpgradeMigrateStrategy"),
+		// enable using BeforeAll/AfterAll
+		Ordered,
+		// prevent from running tests in parallel because setup/teardown should occur once
+		Serial,
+		func() {
+			BeforeAll(func() {
+				By("Set kubevirt workload update strategy is 'Migrate'")
+				setKubeVirtMigrateWorkloadUpdateStrategy(testKVWorkloadUpdateStrategy)
+			})
+
+			BeforeEach(func() {
+				By("Verify Kubevirt workload update strategy is 'Migrate'")
+				kv := utils.GetCurrentKv(kubevirt.Client())
+				Expect(kv.Spec.WorkloadUpdateStrategy).To(Equal(testKVWorkloadUpdateStrategy))
+			})
+
+			Context("running virtual machine with multiple interfaces", func() {
+				const (
+					testBridgeNetAttachDefName  = "bridge-network"
+					testMacvtapNetAttachDefName = "macvtap-network"
+					nodeMacvtapIfaceName        = "eth0"
+					legacyVMIName               = "testvmi-legacy"
+					newVMIName                  = "testvmi-new"
+				)
+
+				var (
+					testBridgeNetAttachDef  *cniv1.NetworkAttachmentDefinition
+					testMacvtapNetAttachDef *cniv1.NetworkAttachmentDefinition
+					testLegacyVMI           *kvv1.VirtualMachineInstance
+				)
+
+				BeforeAll(func() {
+					testBridgeNetAttachDef = newBridgeNetworkAttachmentDefinition(testBridgeNetAttachDefName)
+					Expect(createNetAttachDef(utils.NamespaceTestDefault, testBridgeNetAttachDef)).To(Succeed())
+					DeferCleanup(func() {
+						_ = deleteNetAttachDef(utils.NamespaceTestDefault, testBridgeNetAttachDef.Name)
+					})
+					testMacvtapNetAttachDef = newMacvtapNetworkAttachmentDefinition(testMacvtapNetAttachDefName, nodeMacvtapIfaceName)
+					Expect(createNetAttachDef(utils.NamespaceTestDefault, testMacvtapNetAttachDef)).To(Succeed())
+					DeferCleanup(func() {
+						_ = deleteNetAttachDef(utils.NamespaceTestDefault, testMacvtapNetAttachDef.Name)
+					})
+					testLegacyVMI = startVMI(legacyVMIName, testBridgeNetAttachDef.Name, testMacvtapNetAttachDef.Name)
+					DeferCleanup(func() {
+						deleteVMI(testLegacyVMI)
+					})
+				})
+
+				When("upgrade KubeVirt to target version", func() {
+					targetKubevirtVersion := flags.KubeVirtVersionTag
+					targetKubevirtRegistry := flags.KubeVirtRepoPrefix
+
+					BeforeAll(func() {
+						kv := utils.GetCurrentKv(kubevirt.Client())
+						By(fmt.Sprintf("Updating KubeVirt from [%q] to [%q] version", kv.Status.ObservedKubeVirtVersion, targetKubevirtVersion))
+						setKubeVirtVersionAndRegistry(kv.Name, targetKubevirtVersion, targetKubevirtRegistry)
+					})
+
+					BeforeEach(func() {
+						By("Verifying Kubevirt is updated to the version given by 'container-prefix' 'container-tag' test suite parameters")
+						kv := utils.GetCurrentKv(kubevirt.Client())
+						Expect(kv.Status.ObservedKubeVirtVersion).To(Equal(targetKubevirtVersion),
+							"Kubevirt version is not be equal to the version given by the tests suite parameter '--container-tag'")
+						Expect(kv.Status.ObservedKubeVirtRegistry).To(Equal(targetKubevirtRegistry),
+							"Kubevirt images should be used from the registry given by the tests suite parameter '--container-prefix'")
+
+						assertKubeVirtIsReady()
+					})
+
+					It("VM should migrate successfully", func() {
+						const migrationTrials = 3
+
+						if kubevirtWorkloadStrategyMethodsContainsMigrate(testKVWorkloadUpdateStrategy.WorkloadUpdateMethods) {
+							By("Verify LEGACY VMI migrated following Kubevirt upgrade with Migrate workload strategy")
+							assertVMIUpdated(testLegacyVMI.Namespace, testLegacyVMI.Name, migrationTrials)
+						} else {
+							By("migrate LEGACY VM after Kubevirt upgrade")
+							migrateVMI(testLegacyVMI)
+						}
+
+						By("migrating LEGACY VM again (after Kubevirt upgrade)")
+						migrateVMI(testLegacyVMI)
+
+						// new vmi hotplug
+						By("creating NEW VMI")
+						testNewVMI := startVMI(newVMIName, testBridgeNetAttachDefName, testMacvtapNetAttachDefName)
+						DeferCleanup(func() {
+							deleteVMI(testNewVMI)
+						})
+
+						By("migrating NEW VM")
+						migrateVMI(testNewVMI)
+					})
+				})
+			})
+		},
+	)
 }
 
-func assertKubeVirtIsReady(kv *kvv1.KubeVirt) {
+func kubevirtWorkloadStrategyMethodsContainsMigrate(methods []kvv1.WorkloadUpdateMethod) bool {
+	for _, method := range methods {
+		if method == kvv1.WorkloadUpdateMethodLiveMigrate {
+			return true
+		}
+	}
+	return false
+}
+
+func startVMI(vmiName, testNetAttachDefName, testMacvtapNetAttachDefName string) *kvv1.VirtualMachineInstance {
+	opts := testVMIOptions(testNetAttachDefName, testMacvtapNetAttachDefName)
+	vmi := libvmi.NewFedora(opts...)
+	vmi.Name = vmiName
+	By(fmt.Sprintf("Starting [%s/%s] VM with two secondary interfaces (before upgrading Kubevirt)", utils.NamespaceTestDefault, vmi.Name))
+	vmi, err := kubevirt.Client().VirtualMachineInstance(utils.NamespaceTestDefault).Create(context.Background(), vmi)
+	Expect(err).ToNot(HaveOccurred())
+	libwait.WaitUntilVMIReady(vmi, console.LoginToFedora)
+	return vmi
+}
+
+func deleteVMI(vmi *kvv1.VirtualMachineInstance) {
+	var getErr error
+	By(fmt.Sprintf("Deleting VMI '%s/%s'", vmi.Namespace, vmi.Name))
+	_ = kubevirt.Client().VirtualMachineInstance(vmi.Namespace).Delete(context.Background(), vmi.Name, &k8smetav1.DeleteOptions{})
+	Eventually(func() error {
+		_, getErr = kubevirt.Client().VirtualMachineInstance(vmi.Namespace).Get(context.Background(), vmi.Name, &k8smetav1.GetOptions{})
+		if errors.IsNotFound(getErr) {
+			return nil
+		}
+		return getErr
+	}, 30*time.Second, 1*time.Second).Should(Succeed())
+}
+
+func migrateVMI(vmi *kvv1.VirtualMachineInstance) {
+	vmim := tests.NewRandomMigration(vmi.Name, vmi.Namespace)
+	vmim, err := kubevirt.Client().VirtualMachineInstanceMigration(vmi.Namespace).Create(vmim, &k8smetav1.CreateOptions{})
+	Expect(err).ToNot(HaveOccurred())
+	Eventually(kvmatcher.ThisMigration(vmim), 180*time.Second, 1*time.Second).Should(kvmatcher.HaveSucceeded())
+}
+
+func assertKubevirtIsPreviousVersion() {
+	kv := utils.GetCurrentKv(kubevirt.Client())
+	By("Verify kubevirt is from previous version")
+	Expect(kv.Status.ObservedKubeVirtVersion).To(Equal(flags.PreviousReleaseTag),
+		"Kubevirt version is not be equal to the version given by the tests suite parameter '--previous-release-tag'")
+	Expect(kv.Status.ObservedKubeVirtRegistry).To(Equal(flags.PreviousReleaseRegistry),
+		"Kubevirt images should be used from the registry given by the tests suite parameter '--previous-release-registry'")
+}
+
+func assertKubeVirtIsReady() {
+	kv := utils.GetCurrentKv(kubevirt.Client())
+
+	By("Verify Kubevirt is deployed and ready")
 	Expect(kv).To(SatisfyAll(
 		Not(BeNil()),
 		kvmatcher.HaveConditionTrue(kvv1.KubeVirtConditionAvailable),
@@ -254,20 +244,11 @@ func assertKubeVirtIsReady(kv *kvv1.KubeVirt) {
 	}
 }
 
-func kubevirtWorkloadUpdateStrategyIsMigrate(currentKv *kvv1.KubeVirt) bool {
-	return len(currentKv.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods) == 1 &&
-		currentKv.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods[0] == kvv1.WorkloadUpdateMethodLiveMigrate
-}
-func ensureKubeVirtMigrateWorkloadUpdateStrategy(currentKv *kvv1.KubeVirt) {
-	if kubevirtWorkloadUpdateStrategyIsMigrate(currentKv) {
-		return
-	}
+func setKubeVirtMigrateWorkloadUpdateStrategy(workloadStrategy kvv1.KubeVirtWorkloadUpdateStrategy) {
+	currentKv := utils.GetCurrentKv(kubevirt.Client())
 
 	By("Patch Kubevirt workload update strategy to 'Migrate'")
-	v := kvv1.KubeVirtWorkloadUpdateStrategy{
-		WorkloadUpdateMethods: []kvv1.WorkloadUpdateMethod{kvv1.WorkloadUpdateMethodLiveMigrate},
-	}
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(workloadStrategy.WorkloadUpdateMethods)
 	Expect(err).ToNot(HaveOccurred())
 
 	jsonPatch := []byte(fmt.Sprintf(`[{ "op": "add", "path": "/spec/workloadUpdateStrategy", "value": %s}]`, string(raw)))
@@ -319,6 +300,7 @@ func createNetAttachDef(namespace string, netAttachNef *cniv1.NetworkAttachmentD
 	)
 	return err
 }
+
 func deleteNetAttachDef(namespace, name string) error {
 	By(fmt.Sprintf("deleting NetworkAttachmentDefinition '%s/%s'", namespace, name))
 	virtClient := kubevirt.Client()
@@ -473,6 +455,7 @@ func patchAndWaitForKubeVirtReady(name string, patchBytes []byte) {
 	By("Verifying infrastructure Is Updated")
 	waitForKubevirtSystemPodsReady(name)
 }
+
 func waitForKubeVirtUpdateConditions(name string) {
 	const (
 		kubevirtIsUpdatingTimeout = 120 * time.Second
@@ -490,6 +473,7 @@ func waitForKubeVirtUpdateConditions(name string) {
 			kvmatcher.HaveConditionTrue(kvv1.KubeVirtConditionDegraded),
 		))
 }
+
 func waitForKubeVirtReady(name string) {
 	const (
 		kubevirtReadyTimeout = 420 * time.Second
@@ -540,6 +524,7 @@ func waitForKubeVirtReady(name string) {
 		return nil
 	}, kubevirtReadyTimeout, pollingInterval).Should(Succeed())
 }
+
 func waitForKubevirtSystemPodsReady(kvName string) {
 	const (
 		kubevirtPodsReadyTimeout = 300 * time.Second
@@ -594,6 +579,7 @@ func waitForKubevirtSystemPodsReady(kvName string) {
 		return nil
 	}, kubevirtPodsReadyTimeout, pollingInterval).Should(Succeed())
 }
+
 func isManagedByOperator(labels map[string]string) bool {
 	if v, ok := labels[kvv1.ManagedByLabel]; ok && (v == kvv1.ManagedByLabelOperatorValue || v == kvv1.ManagedByLabelOperatorOldValue) {
 		return true
