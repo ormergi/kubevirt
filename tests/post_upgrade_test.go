@@ -19,6 +19,7 @@ import (
 
 	kvv1 "kubevirt.io/api/core/v1"
 
+	"kubevirt.io/kubevirt/pkg/network/vmispec"
 	"kubevirt.io/kubevirt/tests"
 	"kubevirt.io/kubevirt/tests/console"
 	"kubevirt.io/kubevirt/tests/flags"
@@ -155,6 +156,20 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 						By("migrating LEGACY VM again (after Kubevirt upgrade)")
 						migrateVMI(testLegacyVMI)
 
+						addIfaceOpt := kvv1.AddInterfaceOptions{NetworkAttachmentDefinitionName: testBridgeNetAttachDef.Name, Name: "blue"}
+						By(fmt.Sprintf("hotplug interface %q to test LEGACY VM '%s/%s'", addIfaceOpt.Name, testLegacyVMI.Namespace, testLegacyVMI.Name))
+						Expect(kubevirt.Client().VirtualMachineInstance(testLegacyVMI.Namespace).AddInterface(context.Background(), testLegacyVMI.Name, &addIfaceOpt)).To(Succeed())
+
+						By("migrating LEGACY VM for hotplug interface to take place")
+						migrateVMI(testLegacyVMI)
+
+						By("assert LEGACY VM status reports the new interface")
+						assertVMIHasPluggedIface(testLegacyVMI, addIfaceOpt.Name)
+
+						By("assert LEGACY VM plugged pod iface name is in ordinal form")
+						expectedLegacyVMPodIfaceName := fmt.Sprintf("net%d", len(vmispec.FilterMultusNonDefaultNetworks(testLegacyVMI.Spec.Networks)))
+						assertVMIPodInterfaceExistByName(testLegacyVMI, expectedLegacyVMPodIfaceName)
+
 						// new vmi hotplug
 						By("creating NEW VMI")
 						testNewVMI := startVMI(newVMIName, testBridgeNetAttachDefName, testMacvtapNetAttachDefName)
@@ -164,11 +179,91 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 
 						By("migrating NEW VM")
 						migrateVMI(testNewVMI)
+
+						By(fmt.Sprintf("hotplug interface %q to test NEW VM '%s/%s'", addIfaceOpt.Name, testNewVMI.Namespace, testNewVMI.Name))
+						Expect(kubevirt.Client().VirtualMachineInstance(testNewVMI.Namespace).AddInterface(context.Background(), testNewVMI.Name, &addIfaceOpt)).To(Succeed())
+
+						By("migrating NEW VM for hotplug interface to take place")
+						migrateVMI(testNewVMI)
+
+						By("assert NEW VM status reports the new interface")
+						assertVMIHasPluggedIface(testNewVMI, addIfaceOpt.Name)
+
+						By("assert the NEW VM plugged pod iface name is in hashed form")
+						expectedNewVMIPodIfaceName := "16477688c0e"
+						assertVMIPodInterfaceExistByName(testNewVMI, expectedNewVMIPodIfaceName)
 					})
 				})
 			})
 		},
 	)
+}
+
+func assertVMIHasPluggedIface(vmi *kvv1.VirtualMachineInstance, ifaceName string) *kvv1.VirtualMachineInstance {
+	virtClient := kubevirt.Client()
+	By(fmt.Sprintf("waiting for vmi [%s/%s] interface [%q] to attach and reflect on status", vmi.Namespace, vmi.Name, ifaceName))
+	var updatedVmi *kvv1.VirtualMachineInstance
+	Eventually(func() error {
+		var err error
+		updatedVmi, err = virtClient.VirtualMachineInstance(vmi.Namespace).Get(context.Background(), vmi.Name, &k8smetav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, ifaceStatus := range updatedVmi.Status.Interfaces {
+			if ifaceStatus.Name == ifaceName &&
+				vmispec.ContainsInfoSource(ifaceStatus.InfoSource, vmispec.InfoSourceMultusStatus) &&
+				vmispec.ContainsInfoSource(ifaceStatus.InfoSource, vmispec.InfoSourceDomain) {
+				return nil
+			}
+		}
+		return fmt.Errorf("ifaceStatus is not ready")
+	}, 240*time.Second, 1*time.Second).Should(Succeed())
+	return updatedVmi
+}
+
+func assertVMIPodInterfaceExistByName(vmi *kvv1.VirtualMachineInstance, expectedIfaceName string) {
+	pod := getVMIRunningPod(vmi)
+	Expect(pod).ToNot(BeNil(), "should get '%s/%s' VMI running pod", vmi.Namespace, vmi.Name)
+
+	podAnnotations := pod.GetAnnotations()
+	Expect(podAnnotations).To(HaveKey(cniv1.NetworkStatusAnnot))
+
+	networkStatusAnnotationJSON := pod.ObjectMeta.Annotations[cniv1.NetworkStatusAnnot]
+	var podNetworkStatus []cniv1.NetworkStatus
+	Expect(json.Unmarshal([]byte(networkStatusAnnotationJSON), &podNetworkStatus)).To(Succeed())
+
+	foundExpectedIface := false
+	for _, networkStatus := range podNetworkStatus {
+		if networkStatus.Interface == expectedIfaceName {
+			foundExpectedIface = true
+			break
+		}
+	}
+	Expect(foundExpectedIface).To(BeTrue())
+}
+
+func getVMIRunningPod(vmi *kvv1.VirtualMachineInstance) *k8scorev1.Pod {
+	newLegacyVMIPods, err := getPodsByLabel(string(vmi.GetUID()), kvv1.CreatedByLabel, vmi.Namespace)
+	Expect(err).ToNot(HaveOccurred())
+	for i := 0; i < len(newLegacyVMIPods.Items); i++ {
+		if newLegacyVMIPods.Items[i].Status.Phase == k8scorev1.PodRunning {
+			return &newLegacyVMIPods.Items[i]
+		}
+	}
+	return nil
+}
+
+func getPodsByLabel(label, labelType, namespace string) (*k8scorev1.PodList, error) {
+	virtCli := kubevirt.Client()
+	labelSelector := fmt.Sprintf("%s=%s", labelType, label)
+	pods, err := virtCli.CoreV1().Pods(namespace).List(context.Background(),
+		k8smetav1.ListOptions{LabelSelector: labelSelector},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return pods, nil
 }
 
 func kubevirtWorkloadStrategyMethodsContainsMigrate(methods []kvv1.WorkloadUpdateMethod) bool {
