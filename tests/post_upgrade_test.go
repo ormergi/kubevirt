@@ -61,9 +61,7 @@ var _ = Describe("Kubevirt from previous version", func() {
 		// prevent from running tests in parallel because setup/teardown should occur once
 		Serial,
 		func() {
-			var emptyKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{
-				WorkloadUpdateMethods: []kvv1.WorkloadUpdateMethod{},
-			}
+			var emptyKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{}
 
 			testVMSurviveKubevirtUpgrade(emptyKubeVirtWorkloadUpdateStrategy)
 		},
@@ -72,19 +70,17 @@ var _ = Describe("Kubevirt from previous version", func() {
 
 var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVirtWorkloadUpdateStrategy) {
 	Context(fmt.Sprintf("with workload strategy [%v]", testKVWorkloadUpdateStrategy),
-		Label("PostUpgradeMigrateStrategy"),
 		// enable using BeforeAll/AfterAll
 		Ordered,
 		// prevent from running tests in parallel because setup/teardown should occur once
 		Serial,
 		func() {
 			BeforeAll(func() {
-				By("Set kubevirt workload update strategy is 'Migrate'")
 				setKubeVirtMigrateWorkloadUpdateStrategy(testKVWorkloadUpdateStrategy)
 			})
 
 			BeforeEach(func() {
-				By("Verify Kubevirt workload update strategy is 'Migrate'")
+				By(fmt.Sprintf("Verify Kubevirt workload update strategy is [%v]", testKVWorkloadUpdateStrategy))
 				kv := utils.GetCurrentKv(kubevirt.Client())
 				Expect(kv.Spec.WorkloadUpdateStrategy).To(Equal(testKVWorkloadUpdateStrategy))
 			})
@@ -168,7 +164,22 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 
 						By("assert LEGACY VM plugged pod iface name is in ordinal form")
 						expectedLegacyVMPodIfaceName := fmt.Sprintf("net%d", len(vmispec.FilterMultusNonDefaultNetworks(testLegacyVMI.Spec.Networks)))
-						assertVMIPodInterfaceExistByName(testLegacyVMI, expectedLegacyVMPodIfaceName)
+						Expect(vmiPodInterfaceExistByName(testLegacyVMI, expectedLegacyVMPodIfaceName)).To(BeTrue(),
+							"hotpluged iface should exist in pod")
+
+						removeIfaceOpt := kvv1.RemoveInterfaceOptions{Name: "blue"}
+						By(fmt.Sprintf("unplug interface %q from test LEGACY VM '%s/%s'", removeIfaceOpt.Name, testLegacyVMI.Namespace, testLegacyVMI.Name))
+						Expect(kubevirt.Client().VirtualMachineInstance(testLegacyVMI.Namespace).RemoveInterface(context.Background(), testLegacyVMI.Name, &removeIfaceOpt)).To(Succeed())
+
+						By("migrating LEGACY VM for UNPLUG interface to take place")
+						migrateVMI(testLegacyVMI)
+
+						By("assert LEGACY VM unplug fails and status include the unplugged the interface")
+						assertVMIHasPluggedIface(testLegacyVMI, removeIfaceOpt.Name)
+
+						By("assert LEGACY VM unplug fails and interface still exist in pod")
+						Expect(vmiPodInterfaceExistByName(testLegacyVMI, expectedLegacyVMPodIfaceName)).To(BeTrue(),
+							"unpluged iface should fail for legacy VM and the corresponding interface should exist in pod")
 
 						// new vmi hotplug
 						By("creating NEW VMI")
@@ -190,8 +201,22 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 						assertVMIHasPluggedIface(testNewVMI, addIfaceOpt.Name)
 
 						By("assert the NEW VM plugged pod iface name is in hashed form")
-						expectedNewVMIPodIfaceName := "16477688c0e"
-						assertVMIPodInterfaceExistByName(testNewVMI, expectedNewVMIPodIfaceName)
+						expectedNewVMIPodIfaceName := "pod16477688c0e"
+						Expect(vmiPodInterfaceExistByName(testNewVMI, expectedNewVMIPodIfaceName)).To(BeTrue(),
+							"hotpluged iface should exist in pod")
+
+						By(fmt.Sprintf("unplug interface %q from test NEW VM '%s/%s'", removeIfaceOpt.Name, testNewVMI.Namespace, testNewVMI.Name))
+						Expect(kubevirt.Client().VirtualMachineInstance(testNewVMI.Namespace).RemoveInterface(context.Background(), testNewVMI.Name, &removeIfaceOpt)).To(Succeed())
+
+						By("migrating NEW VM for unplug interface to take place")
+						migrateVMI(testNewVMI)
+
+						By("assert NEW VM status updated and not include the unpluged the interface")
+						assertVMIInterfaceNotExist(testNewVMI, removeIfaceOpt.Name)
+
+						By("assert NEW VM unpluged interface not exist in pod")
+						Expect(vmiPodInterfaceExistByName(testNewVMI, expectedNewVMIPodIfaceName)).To(BeFalse(),
+							"unpluged iface should not exist in pod")
 					})
 				})
 			})
@@ -221,7 +246,27 @@ func assertVMIHasPluggedIface(vmi *kvv1.VirtualMachineInstance, ifaceName string
 	return updatedVmi
 }
 
-func assertVMIPodInterfaceExistByName(vmi *kvv1.VirtualMachineInstance, expectedIfaceName string) {
+func assertVMIInterfaceNotExist(vmi *kvv1.VirtualMachineInstance, ifaceName string) *kvv1.VirtualMachineInstance {
+	virtClient := kubevirt.Client()
+	By(fmt.Sprintf("waiting for vmi [%s/%s] interface [%q] to detach and reflect on status", vmi.Namespace, vmi.Name, ifaceName))
+	var updatedVmi *kvv1.VirtualMachineInstance
+	Eventually(func() error {
+		var err error
+		updatedVmi, err = virtClient.VirtualMachineInstance(vmi.Namespace).Get(context.Background(), vmi.Name, &k8smetav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, ifaceStatus := range updatedVmi.Status.Interfaces {
+			if ifaceStatus.Name == ifaceName {
+				return fmt.Errorf("iface have not detached yet")
+			}
+		}
+		return nil
+	}, 240*time.Second, 1*time.Second).Should(Succeed())
+	return updatedVmi
+}
+
+func vmiPodInterfaceExistByName(vmi *kvv1.VirtualMachineInstance, expectedIfaceName string) bool {
 	pod := getVMIRunningPod(vmi)
 	Expect(pod).ToNot(BeNil(), "should get '%s/%s' VMI running pod", vmi.Namespace, vmi.Name)
 
@@ -239,7 +284,8 @@ func assertVMIPodInterfaceExistByName(vmi *kvv1.VirtualMachineInstance, expected
 			break
 		}
 	}
-	Expect(foundExpectedIface).To(BeTrue())
+
+	return foundExpectedIface
 }
 
 func getVMIRunningPod(vmi *kvv1.VirtualMachineInstance) *k8scorev1.Pod {
@@ -342,11 +388,16 @@ func assertKubeVirtIsReady() {
 func setKubeVirtMigrateWorkloadUpdateStrategy(workloadStrategy kvv1.KubeVirtWorkloadUpdateStrategy) {
 	currentKv := utils.GetCurrentKv(kubevirt.Client())
 
-	By("Patch Kubevirt workload update strategy to 'Migrate'")
-	raw, err := json.Marshal(workloadStrategy.WorkloadUpdateMethods)
+	if len(workloadStrategy.WorkloadUpdateMethods) == 0 {
+		By("no workload updated is set")
+		return
+	}
+
+	By(fmt.Sprintf("Patch Kubevirt workload update strategy to %v", workloadStrategy))
+	workloadStrategyJSON, err := json.Marshal(workloadStrategy)
 	Expect(err).ToNot(HaveOccurred())
 
-	jsonPatch := []byte(fmt.Sprintf(`[{ "op": "add", "path": "/spec/workloadUpdateStrategy", "value": %s}]`, string(raw)))
+	jsonPatch := []byte(fmt.Sprintf(`[{ "op": "add", "path": "/spec/workloadUpdateStrategy", "value": %s}]`, string(workloadStrategyJSON)))
 	patchAndWaitForKubeVirtReady(currentKv.Name, jsonPatch)
 }
 
