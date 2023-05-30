@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -12,6 +14,8 @@ import (
 	cniv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	k8scorev1 "k8s.io/api/core/v1"
+	k8sappsv1 "k8s.io/api/apps/v1"
+	extclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -19,7 +23,10 @@ import (
 	kvv1 "kubevirt.io/api/core/v1"
 
 	"kubevirt.io/kubevirt/pkg/network/vmispec"
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/components"
+	"kubevirt.io/kubevirt/pkg/virt-operator/util"
 	"kubevirt.io/kubevirt/tests"
+	"kubevirt.io/kubevirt/tests/clientcmd"
 	"kubevirt.io/kubevirt/tests/flags"
 	"kubevirt.io/kubevirt/tests/framework/kubevirt"
 	kvmatcher "kubevirt.io/kubevirt/tests/framework/matcher"
@@ -32,16 +39,8 @@ import (
 // - VM can migrate, w and w/o 'Migrate' WorkloadStrategy.
 // - VM can migrate upon user request.
 var _ = Describe("Kubevirt from previous version", func() {
-	BeforeEach(func() {
-		assertKubevirtIsPreviousVersion()
-	})
-
 	Context("with 'Migrate' workload update strategy",
 		Label("PostUpgradeMigrateStrategy"),
-		// enable using BeforeAll/AfterAll
-		Ordered,
-		// prevent from running tests in parallel because setup/teardown should occur once
-		Serial,
 		func() {
 			var migrateKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{
 				WorkloadUpdateMethods: []kvv1.WorkloadUpdateMethod{kvv1.WorkloadUpdateMethodLiveMigrate},
@@ -53,10 +52,6 @@ var _ = Describe("Kubevirt from previous version", func() {
 
 	Context("no workload update strategy",
 		Label("PostUpgrade"),
-		// enable using BeforeAll/AfterAll
-		Ordered,
-		// prevent from running tests in parallel because setup/teardown should occur once
-		Serial,
 		func() {
 			var emptyKubeVirtWorkloadUpdateStrategy = kvv1.KubeVirtWorkloadUpdateStrategy{}
 
@@ -72,13 +67,33 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 		// prevent from running tests in parallel because setup/teardown should occur once
 		Serial,
 		func() {
+			const previousOperatorManifestPath = "/home/omergi/go/src/kubevirt.io/kubevirt/prev-kv-manifests/manifests/release/kubevirt-operator.yaml"
+
+			AfterAll(func() {
+				// revert Kubevirt to previous version
+				By("Rollback Kubevirt operator version")
+				installOperator(previousOperatorManifestPath)
+
+				kv := utils.GetCurrentKv(kubevirt.Client())
+				By("Wait for KubeVirt update conditions")
+				waitForKubeVirtUpdateConditions(kv.Name)
+				By("Waiting for KubeVirt to stabilize")
+				waitForKubeVirtReady(kv.Name)
+				By("Verifying infrastructure Is Updated")
+				waitForKubevirtSystemPodsReady(kv.Name)
+			})
+
 			BeforeAll(func() {
 				setKubeVirtMigrateWorkloadUpdateStrategy(testKVWorkloadUpdateStrategy)
 			})
 
 			BeforeEach(func() {
-				By(fmt.Sprintf("Verify Kubevirt workload update strategy is [%v]", testKVWorkloadUpdateStrategy))
 				kv := utils.GetCurrentKv(kubevirt.Client())
+				assertKubeVirtIsReady(kv)
+
+				assertKubevirtIsPreviousVersion()
+
+				By(fmt.Sprintf("Verify Kubevirt workload update strategy is [%v]", testKVWorkloadUpdateStrategy))
 				Expect(kv.Spec.WorkloadUpdateStrategy).To(Equal(testKVWorkloadUpdateStrategy))
 			})
 
@@ -122,9 +137,20 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 						targetKubevirtVersion = flags.KubeVirtVersionTag
 						targetKubevirtRegistry = flags.KubeVirtRepoPrefix
 
+						// kv := utils.GetCurrentKv(kubevirt.Client())
+						// By(fmt.Sprintf("Updating KubeVirt from [%q] to [%q] version", kv.Status.ObservedKubeVirtVersion, targetKubevirtVersion))
+						// setKubeVirtVersionAndRegistry(kv, targetKubevirtVersion, targetKubevirtRegistry)
+						
+						By("Upgrading KubeVirt operator")
+						installOperator(flags.OperatorManifestPath)
+
 						kv := utils.GetCurrentKv(kubevirt.Client())
-						By(fmt.Sprintf("Updating KubeVirt from [%q] to [%q] version", kv.Status.ObservedKubeVirtVersion, targetKubevirtVersion))
-						setKubeVirtVersionAndRegistry(kv, targetKubevirtVersion, targetKubevirtRegistry)
+						By("Wait for KubeVirt update conditions")
+						waitForKubeVirtUpdateConditions(kv.Name)
+						By("Waiting for KubeVirt to stabilize")
+						waitForKubeVirtReady(kv.Name)
+						By("Verifying infrastructure Is Updated")
+						waitForKubevirtSystemPodsReady(kv.Name)
 					})
 
 					BeforeEach(func() {
@@ -231,6 +257,22 @@ var testVMSurviveKubevirtUpgrade = func(testKVWorkloadUpdateStrategy kvv1.KubeVi
 			})
 		},
 	)
+}
+
+func createTestsKubeVirt(imageTag, imageRegisty string, kv *kvv1.KubeVirt) {
+	testsKv := kv.DeepCopy()
+	testsKv.Status = kvv1.KubeVirtStatus{}
+	testsKv.ObjectMeta = k8smetav1.ObjectMeta{Name: kv.Name + "test", Namespace: kv.Namespace}
+	testsKv.Spec.ImageTag = imageTag
+	testsKv.Spec.ImageRegistry = imageRegisty
+	testsKv, err := kubevirt.Client().KubeVirt(kv.Namespace).Create(testsKv)
+	Expect(err).ToNot(HaveOccurred())
+	By("Wait for KubeVirt update conditions")
+	waitForKubeVirtUpdateConditions(testsKv.Name)
+	By("Waiting for KubeVirt to stabilize")
+	waitForKubeVirtReady(testsKv.Name)
+	By("Verifying infrastructure Is Updated")
+	waitForKubevirtSystemPodsReady(testsKv.Name)
 }
 
 func assertVMIHasPluggedIface(vm *kvv1.VirtualMachine, ifaceName string) {
@@ -718,4 +760,139 @@ func isManagedByOperator(labels map[string]string) bool {
 		return true
 	}
 	return false
+}
+
+func patchOperator(newImageName, version string) bool {
+	modified := true
+
+	var newImage string
+	Eventually(func() error {
+		operator, oldImage, registry, oldImageName, oldVersion := parseOperatorImage()
+		if newImageName == "" {
+			// keep old prefix
+			newImageName = oldImageName
+		}
+		if version == "" {
+			// keep old version
+			version = oldVersion
+		} else {
+			newVersion := components.AddVersionSeparatorPrefix(version)
+			version = newVersion
+		}
+		newImage = fmt.Sprintf("%s/%s%s", registry, newImageName, version)
+
+		if oldImage == newImage {
+			modified = false
+			return nil
+		}
+
+		operator.Spec.Template.Spec.Containers[0].Image = newImage
+		for idx, env := range operator.Spec.Template.Spec.Containers[0].Env {
+			if env.Name == util.VirtOperatorImageEnvName {
+				env.Value = newImage
+				operator.Spec.Template.Spec.Containers[0].Env[idx] = env
+				break
+			}
+		}
+
+		newTemplate, _ := json.Marshal(operator.Spec.Template)
+
+		op := fmt.Sprintf(`[{ "op": "replace", "path": "/spec/template", "value": %s }]`, string(newTemplate))
+
+		_, err := kubevirt.Client().AppsV1().Deployments(flags.KubeVirtInstallNamespace).Patch(context.Background(), "virt-operator", k8stypes.JSONPatchType, []byte(op), k8smetav1.PatchOptions{})
+
+		return err
+	}, 15*time.Second, 1*time.Second).ShouldNot(HaveOccurred())
+
+	Eventually(func() bool {
+		podList, err := kubevirt.Client().CoreV1().Pods(flags.KubeVirtInstallNamespace).List(context.Background(), k8smetav1.ListOptions{LabelSelector: "kubevirt.io=virt-operator"})
+		if err != nil {
+			return false
+		}
+		updatePods := 0
+		for _, pod := range podList.Items {
+			if pod.Spec.Containers[0].Image == newImage {
+				updatePods++
+			}
+		}
+		return updatePods == len(podList.Items)
+	}, 120*time.Second, 3*time.Second).Should(BeTrue())
+
+	return modified
+}
+
+func parseOperatorImage() (operator *k8sappsv1.Deployment, image, registry, imageName, version string) {
+	return parseDeployment("virt-operator")
+}
+
+func parseDeployment(name string) (deployment *k8sappsv1.Deployment, image, registry, imageName, version string) {
+	var err error
+	deployment, err = kubevirt.Client().AppsV1().Deployments(flags.KubeVirtInstallNamespace).Get(context.Background(), name, k8smetav1.GetOptions{})
+	Expect(err).ToNot(HaveOccurred())
+	image = deployment.Spec.Template.Spec.Containers[0].Image
+	registry, imageName, version = parseImage(image)
+	return
+}
+
+func parseImage(image string) (registry, imageName, version string) {
+	var getVersion func(matches [][]string) string
+	var imageRegEx *regexp.Regexp
+
+	if strings.Contains(image, "@sha") {
+		imageRegEx = regexp.MustCompile(`^(.+)/(.+)(@sha\d+:)([\da-fA-F]+)$`)
+		getVersion = func(matches [][]string) string { return matches[0][3] + matches[0][4] }
+	} else {
+		imageRegEx = regexp.MustCompile(`^(.+)/(.+)(:.+)$`)
+		getVersion = func(matches [][]string) string { return matches[0][3] }
+	}
+
+	matches := imageRegEx.FindAllStringSubmatch(image, 1)
+	Expect(matches).To(HaveLen(1))
+	registry = matches[0][1]
+	imageName = matches[0][2]
+	version = getVersion(matches)
+
+	return
+}
+
+//
+////targetKubevirtVersionOperatorManifest := flags.OperatorManifestPath
+//func deployKubevirtOperator(manifestPath string) {
+//	k8sClient := clientcmd.GetK8sCmdClient()
+//	_, _, err := clientcmd.RunCommandWithNS(k8smetav1.NamespaceNone, k8sClient, "apply", "-f", manifestPath)
+//	Expect(err).ToNot(HaveOccurred())
+//
+//	By("Waiting for KubeVirt CRD to be created")
+//	ext, err := extclient.NewForConfig(kubevirt.Client().Config())
+//	Expect(err).ToNot(HaveOccurred())
+//
+//	Eventually(func() error {
+//		_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(context.Background(), "kubevirts.kubevirt.io", k8smetav1.GetOptions{})
+//		return err
+//	}, 60*time.Second, 1*time.Second).ShouldNot(HaveOccurred())
+//}
+//func removeKubevirtOperator(manifestPath string) {
+//	k8sClient := clientcmd.GetK8sCmdClient()
+//	_, _, err := clientcmd.RunCommandWithNS(k8smetav1.NamespaceNone, k8sClient, "delete", "-f", manifestPath)
+//	Expect(err).ToNot(HaveOccurred())
+//}
+
+func installOperator(manifestPath string) {
+	By(fmt.Sprintf("Deploying KubeVirt operator from manifest: %q", manifestPath))
+
+	k8sClient := clientcmd.GetK8sCmdClient()
+
+	// namespace is already hardcoded within the manifests
+	_, _, err := clientcmd.RunCommandWithNS(k8smetav1.NamespaceNone, k8sClient, "apply", "-f", manifestPath)
+	Expect(err).ToNot(HaveOccurred())
+
+	By("Waiting for KubeVirt CRD to be created")
+
+	ext, err := extclient.NewForConfig(kubevirt.Client().Config())
+	Expect(err).ToNot(HaveOccurred())
+
+	Eventually(func() error {
+		_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(context.Background(), "kubevirts.kubevirt.io", k8smetav1.GetOptions{})
+		return err
+	}, 60*time.Second, 1*time.Second).ShouldNot(HaveOccurred())
 }
