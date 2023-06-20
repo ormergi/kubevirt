@@ -45,7 +45,7 @@ var _ = Describe("Network interface hot{un}plug", func() {
 	DescribeTable("calculate if changes are required",
 
 		func(vmi *v1.VirtualMachineInstance, pod *k8sv1.Pod, expIfaces []v1.Interface, expNets []v1.Network, expToChange bool) {
-			ifaces, nets, exists := calculateDynamicInterfaces(vmi, pod)
+			ifaces, nets, exists := calculateDynamicInterfaces(vmi)
 			Expect(ifaces).To(Equal(expIfaces))
 			Expect(nets).To(Equal(expNets))
 			Expect(exists).To(Equal(expToChange))
@@ -105,46 +105,6 @@ var _ = Describe("Network interface hot{un}plug", func() {
 			[]v1.Network{{Name: testNetworkName1}},
 			expectToChange,
 		),
-		Entry("when a vmi interface has state set to `absent`, but pod iface name is ordinal",
-			libvmi.New(
-				libvmi.WithInterface(v1.Interface{Name: testNetworkName1}),
-				libvmi.WithInterface(v1.Interface{Name: testNetworkName2, State: v1.InterfaceStateAbsent}),
-				libvmi.WithNetwork(&v1.Network{Name: testNetworkName1}),
-				libvmi.WithNetwork(&v1.Network{Name: testNetworkName2}),
-				withInterfaceStatus(v1.VirtualMachineInstanceNetworkInterface{Name: testNetworkName1}),
-				withInterfaceStatus(v1.VirtualMachineInstanceNetworkInterface{Name: testNetworkName2}),
-			),
-			&k8sv1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
-					networkv1.NetworkStatusAnnot: `[
-						{"interface":"net1", "name":"red-net", "namespace": "default"},
-						{"interface":"net2", "name":"blue-net", "namespace": "default"}
-					]`,
-				}},
-			},
-			nil,
-			nil,
-			expectNoChange,
-		),
-		Entry("when vmi interfaces have an interface to hotplug and one to hot-unplug, given ordinal names",
-			libvmi.New(
-				libvmi.WithInterface(v1.Interface{Name: testNetworkName1, State: v1.InterfaceStateAbsent}),
-				libvmi.WithInterface(v1.Interface{Name: testNetworkName2}),
-				libvmi.WithNetwork(&v1.Network{Name: testNetworkName1}),
-				libvmi.WithNetwork(&v1.Network{Name: testNetworkName2}),
-				withInterfaceStatus(v1.VirtualMachineInstanceNetworkInterface{Name: testNetworkName1}),
-			),
-			&k8sv1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
-					networkv1.NetworkStatusAnnot: `[
-						{"interface":"net1", "name":"red-net", "namespace": "default"}
-					]`,
-				}},
-			},
-			[]v1.Interface{{Name: testNetworkName1, State: v1.InterfaceStateAbsent}, {Name: testNetworkName2}},
-			[]v1.Network{{Name: testNetworkName1}, {Name: testNetworkName2}},
-			expectToChange,
-		),
 		Entry("when vmi interfaces have an interface to hotplug and one to hot-unplug, given hashed names",
 			libvmi.New(
 				libvmi.WithInterface(v1.Interface{Name: testNetworkName1, State: v1.InterfaceStateAbsent}),
@@ -196,6 +156,33 @@ var _ = Describe("Network interface hot{un}plug", func() {
 			[]v1.Interface{{Name: "blue"}},
 			[]v1.VirtualMachineInterfaceRequest{{RemoveInterfaceOptions: &v1.RemoveInterfaceOptions{Name: "blue"}}},
 			[]v1.VirtualMachineInterfaceRequest{{RemoveInterfaceOptions: &v1.RemoveInterfaceOptions{Name: "blue"}}},
+		),
+	)
+
+	DescribeTable("network removal cancellation",
+		func(interfaces []v1.Interface, expectedPatch string) {
+			patch, err := createPatchToCancelInterfacesRemoval(interfaces)
+			Expect(err).NotTo(HaveOccurred())
+			if patch == nil {
+				patch = []byte("{}")
+			}
+			Expect(patch).To(MatchJSON(expectedPatch))
+		},
+		Entry("has no effect when there are no interfaces in the spec", []v1.Interface{}, "{}"),
+		Entry("has no effect when there are no interfaces set with absent", []v1.Interface{{Name: "foo"}}, "{}"),
+		Entry("is removing all interface `absent` status",
+			[]v1.Interface{{Name: "foo", State: v1.InterfaceStateAbsent}, {Name: "boo", State: v1.InterfaceStateAbsent}},
+			`[
+				{ "op": "test", "path": "/spec/domain/devices/interfaces", "value": [{"name":"foo","state":"absent"},{"name":"boo","state":"absent"}]},
+                { "op": "add", "path": "/spec/domain/devices/interfaces", "value": [{"name":"foo"},{"name":"boo"}]}
+			]`,
+		),
+		Entry("is removing one interface `absent` status out of two interfaces",
+			[]v1.Interface{{Name: "foo", State: v1.InterfaceStateAbsent}, {Name: "boo"}},
+			`[
+				{ "op": "test", "path": "/spec/domain/devices/interfaces", "value": [{"name":"foo","state":"absent"},{"name":"boo"}] },
+                { "op": "add", "path": "/spec/domain/devices/interfaces", "value": [{"name":"foo"},{"name":"boo"}] }
+			]`,
 		),
 	)
 })
