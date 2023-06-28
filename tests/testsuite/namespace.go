@@ -94,29 +94,29 @@ func CleanNamespaces() {
 		err = resetNamespaceLabelsToDefault(virtCli, namespace)
 		util.PanicOnError(err)
 
-		clusterinstancetypes, err := virtCli.VirtualMachineClusterInstancetype().List(context.Background(), listOptions)
-		util.PanicOnError(err)
-		for _, clusterinstancetypes := range clusterinstancetypes.Items {
-			util.PanicOnError(virtCli.VirtualMachineClusterInstancetype().Delete(context.Background(), clusterinstancetypes.Name, metav1.DeleteOptions{}))
-		}
+		//clusterinstancetypes, err := virtCli.VirtualMachineClusterInstancetype().List(context.Background(), listOptions)
+		//util.PanicOnError(err)
+		//for _, clusterinstancetypes := range clusterinstancetypes.Items {
+		//	util.PanicOnError(virtCli.VirtualMachineClusterInstancetype().Delete(context.Background(), clusterinstancetypes.Name, metav1.DeleteOptions{}))
+		//}
 
-		instancetype, err := virtCli.VirtualMachineInstancetype(namespace).List(context.Background(), metav1.ListOptions{})
-		util.PanicOnError(err)
-		for _, instancetype := range instancetype.Items {
-			util.PanicOnError(virtCli.VirtualMachineInstancetype(namespace).Delete(context.Background(), instancetype.Name, metav1.DeleteOptions{}))
-		}
+		// instancetype, err := virtCli.VirtualMachineInstancetype(namespace).List(context.Background(), metav1.ListOptions{})
+		// util.PanicOnError(err)
+		// for _, instancetype := range instancetype.Items {
+		// 	util.PanicOnError(virtCli.VirtualMachineInstancetype(namespace).Delete(context.Background(), instancetype.Name, metav1.DeleteOptions{}))
+		// }
 
-		clusterPreference, err := virtCli.VirtualMachineClusterPreference().List(context.Background(), listOptions)
-		util.PanicOnError(err)
-		for _, clusterpreference := range clusterPreference.Items {
-			util.PanicOnError(virtCli.VirtualMachineClusterPreference().Delete(context.Background(), clusterpreference.Name, metav1.DeleteOptions{}))
-		}
+		// clusterPreference, err := virtCli.VirtualMachineClusterPreference().List(context.Background(), listOptions)
+		// util.PanicOnError(err)
+		// for _, clusterpreference := range clusterPreference.Items {
+		// 	util.PanicOnError(virtCli.VirtualMachineClusterPreference().Delete(context.Background(), clusterpreference.Name, metav1.DeleteOptions{}))
+		// }
 
-		vmPreference, err := virtCli.VirtualMachinePreference(namespace).List(context.Background(), metav1.ListOptions{})
-		util.PanicOnError(err)
-		for _, preference := range vmPreference.Items {
-			util.PanicOnError(virtCli.VirtualMachinePreference(namespace).Delete(context.Background(), preference.Name, metav1.DeleteOptions{}))
-		}
+		// vmPreference, err := virtCli.VirtualMachinePreference(namespace).List(context.Background(), metav1.ListOptions{})
+		// util.PanicOnError(err)
+		// for _, preference := range vmPreference.Items {
+		// 	util.PanicOnError(virtCli.VirtualMachinePreference(namespace).Delete(context.Background(), preference.Name, metav1.DeleteOptions{}))
+		// }
 
 		//Remove all Jobs
 		jobDeleteStrategy := metav1.DeletePropagationOrphan
