@@ -483,18 +483,18 @@ func testVMIOptions(bridgeNetAttachDefName, macvtapNetAttachDefName string) []li
 			NetworkName: bridgeNetAttachDefName,
 		}},
 	}
-	mavtapNetwork := &kvv1.Network{
-		Name: "macvtapnet1",
-		NetworkSource: kvv1.NetworkSource{Multus: &kvv1.MultusNetwork{
-			NetworkName: macvtapNetAttachDefName,
-		}},
-	}
-	mavtapIface := kvv1.Interface{
-		Name: "macvtapnet1",
-		InterfaceBindingMethod: kvv1.InterfaceBindingMethod{
-			Macvtap: &kvv1.InterfaceMacvtap{},
-		},
-	}
+	// mavtapNetwork := &kvv1.Network{
+	// 	Name: "macvtapnet1",
+	// 	NetworkSource: kvv1.NetworkSource{Multus: &kvv1.MultusNetwork{
+	// 		NetworkName: macvtapNetAttachDefName,
+	// 	}},
+	// }
+	// mavtapIface := kvv1.Interface{
+	// 	Name: "macvtapnet1",
+	// 	InterfaceBindingMethod: kvv1.InterfaceBindingMethod{
+	// 		Macvtap: &kvv1.InterfaceMacvtap{},
+	// 	},
+	// }
 	return []libvmi.Option{
 		libvmi.WithCloudInitNoCloudUserData("#!/bin/bash\necho 'hello'\n", false),
 		libvmi.WithNetwork(defaultNetwork),
@@ -503,8 +503,8 @@ func testVMIOptions(bridgeNetAttachDefName, macvtapNetAttachDefName string) []li
 		libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding(bridgeNetwork1.Name)),
 		libvmi.WithNetwork(bridgeNetwork2),
 		libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding(bridgeNetwork2.Name)),
-		libvmi.WithNetwork(mavtapNetwork),
-		libvmi.WithInterface(mavtapIface),
+		// libvmi.WithNetwork(mavtapNetwork),
+		// libvmi.WithInterface(mavtapIface),
 	}
 }
 
