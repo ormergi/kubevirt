@@ -131,10 +131,19 @@ func (c *NetStat) UpdateStatus(vmi *v1.VirtualMachineInstance, domain *api.Domai
 		interfacesStatus = append([]v1.VirtualMachineInstanceNetworkInterface{*primaryInterfaceStatus}, interfacesStatus...)
 	}
 
-	for ifaceIndex, ifaceStatus := range interfacesStatus {
-		if _, exists := multusStatusNetworksByName[ifaceStatus.Name]; exists {
-			interfacesStatus[ifaceIndex].InfoSource = netvmispec.AddInfoSource(
-				ifaceStatus.InfoSource, netvmispec.InfoSourceMultusStatus)
+	indexedIfaceStatus := netvmispec.IndexInterfacesFromStatus(interfacesStatus,
+		func(ifaceStatus v1.VirtualMachineInstanceNetworkInterface) bool { return true })
+	for multusIfaceName := range multusStatusNetworksByName {
+		_, existInSpec := vmiInterfacesSpecByName[multusIfaceName]
+		_, existInNewStatus := indexedIfaceStatus[multusIfaceName]
+		if existInSpec && !existInNewStatus {
+			interfacesStatus = append(interfacesStatus, v1.VirtualMachineInstanceNetworkInterface{
+				Name:       multusIfaceName,
+				InfoSource: netvmispec.InfoSourceMultusStatus,
+			})
+		} else if existInNewStatus {
+			iface := netvmispec.LookupInterfaceStatusByName(interfacesStatus, multusIfaceName)
+			iface.InfoSource = netvmispec.AddInfoSource(iface.InfoSource, netvmispec.InfoSourceMultusStatus)
 		}
 	}
 
