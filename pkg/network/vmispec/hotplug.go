@@ -69,3 +69,21 @@ func NetworksToHotplugWhosePodIfacesAreReady(vmi *v1.VirtualMachineInstance) []v
 
 	return networksToHotplug
 }
+
+var supportedBindings = map[v1.InterfaceBindingMethod]struct{}{
+	{Bridge: &v1.InterfaceBridge{}}: {},
+}
+
+func FilterIfacesForHotplug(ifaces []v1.Interface) []v1.Interface {
+	return FilterInterfacesSpec(ifaces, func(iface v1.Interface) bool {
+		_, exist := supportedBindings[iface.InterfaceBindingMethod]
+		return iface.State != v1.InterfaceStateAbsent && exist
+	})
+}
+
+func FilterIfacesForHotUnplug(ifaces []v1.Interface) []v1.Interface {
+	return FilterInterfacesSpec(ifaces, func(iface v1.Interface) bool {
+		_, exist := supportedBindings[iface.InterfaceBindingMethod]
+		return iface.State == v1.InterfaceStateAbsent && exist
+	})
+}

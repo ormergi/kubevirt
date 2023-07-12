@@ -113,9 +113,7 @@ func (vim *virtIOInterfaceManager) hotUnplugVirtioInterface(vmi *v1.VirtualMachi
 }
 
 func interfacesToHotUnplug(vmiSpecInterfaces []v1.Interface, domainSpecInterfaces []api.Interface) []api.Interface {
-	ifaces2remove := netvmispec.FilterInterfacesSpec(vmiSpecInterfaces, func(i v1.Interface) bool {
-		return i.State == v1.InterfaceStateAbsent
-	})
+	ifaces2remove := netvmispec.FilterIfacesForHotUnplug(vmiSpecInterfaces)
 	var domainIfacesToRemove []api.Interface
 	for _, vmiIface := range ifaces2remove {
 		if domainIface := lookupDomainInterfaceByName(domainSpecInterfaces, vmiIface.Name); domainIface != nil {
@@ -142,16 +140,19 @@ func lookupDomainInterfaceByName(domainIfaces []api.Interface, networkName strin
 }
 
 func networksToHotplugWhoseInterfacesAreNotInTheDomain(vmi *v1.VirtualMachineInstance, indexedDomainIfaces map[string]api.Interface) []v1.Network {
+	ifacesToHotplug := netvmispec.FilterIfacesForHotplug(vmi.Spec.Domain.Devices.Interfaces)
+	pluggableIfaces := netvmispec.IndexInterfaceSpecByName(ifacesToHotplug)
+
 	var networksToHotplug []v1.Network
 	interfacesToHoplug := netvmispec.IndexInterfacesFromStatus(
 		vmi.Status.Interfaces,
 		func(ifaceStatus v1.VirtualMachineInstanceNetworkInterface) bool {
-			_, exists := indexedDomainIfaces[ifaceStatus.Name]
-			vmiSpecIface := netvmispec.LookupInterfaceByName(vmi.Spec.Domain.Devices.Interfaces, ifaceStatus.Name)
+			_, attachedToDomain := indexedDomainIfaces[ifaceStatus.Name]
+			_, pluggable := pluggableIfaces[ifaceStatus.Name]
 
 			return netvmispec.ContainsInfoSource(
 				ifaceStatus.InfoSource, netvmispec.InfoSourceMultusStatus,
-			) && !exists && vmiSpecIface.State != v1.InterfaceStateAbsent
+			) && !attachedToDomain && pluggable
 		},
 	)
 
