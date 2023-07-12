@@ -105,7 +105,61 @@ var _ = Describe("utilitary funcs to identify attachments to hotplug", func() {
 			dummyVMIWithAttachmentAlreadyAvailableOnDomain(networkName, nadName, guestIfaceName),
 		),
 	)
+
+	DescribeTable("FilterIfacesForHotplug",
+		func(ifaces, expectedIfaces []v1.Interface) {
+			Expect(vmispec.FilterIfacesForHotplug(ifaces)).To(Equal(expectedIfaces))
+		},
+		Entry("given bridge iface",
+			[]v1.Interface{
+				{InterfaceBindingMethod: bridgeBinding()},
+			},
+			[]v1.Interface{{
+				InterfaceBindingMethod: bridgeBinding()},
+			},
+		),
+		Entry("given bridge iface with 'absent' state, should return no iface",
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+			nil,
+		),
+		Entry("given SR-IOV iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}},
+			nil,
+		),
+	)
+
+	DescribeTable("FilterIfacesForHotUnplug",
+		func(ifaces, expectedIfaces []v1.Interface) {
+			Expect(vmispec.FilterIfacesForHotUnplug(ifaces)).To(Equal(expectedIfaces))
+		},
+		Entry("given bridge iface with 'absent' state",
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+		),
+		Entry("given bridge iface with no 'absent' state, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: bridgeBinding()}},
+			nil,
+		),
+		Entry("given SR-IOV iface with no 'absent' state, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}},
+			nil,
+		),
+		Entry("[misc] given SR-IOV iface with 'absent' state, should return no iface",
+			[]v1.Interface{{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}},
+			nil,
+		),
+	)
 })
+
+func bridgeBinding() v1.InterfaceBindingMethod {
+	return v1.InterfaceBindingMethod{Bridge: &v1.InterfaceBridge{}}
+}
 
 func dummyVMIWithoutStatus(networkName string, nadName string) *v1.VirtualMachineInstance {
 	vmi := newVMI()

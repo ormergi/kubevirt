@@ -69,3 +69,15 @@ func NetworksToHotplugWhosePodIfacesAreReady(vmi *v1.VirtualMachineInstance) []v
 
 	return networksToHotplug
 }
+
+func FilterIfacesForHotplug(ifaces []v1.Interface) []v1.Interface {
+	return FilterInterfacesSpec(ifaces, func(iface v1.Interface) bool {
+		return iface.State != v1.InterfaceStateAbsent && iface.SRIOV == nil
+	})
+}
+
+func FilterIfacesForHotUnplug(ifaces []v1.Interface) []v1.Interface {
+	return FilterInterfacesSpec(ifaces, func(iface v1.Interface) bool {
+		return iface.State == v1.InterfaceStateAbsent && iface.SRIOV == nil
+	})
+}
