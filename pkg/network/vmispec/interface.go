@@ -129,13 +129,14 @@ func LookupInterfaceByName(ifaces []v1.Interface, name string) *v1.Interface {
 	return nil
 }
 
-// InterfacesNames returns slice with the names of the given interfaces.
-func InterfacesNames(interfaces []v1.Interface) []string {
-	var ifaceNames []string
+// InterfacesNames returns map with the names of the given interfaces.
+func InterfacesNames(interfaces []v1.Interface) map[string]struct{} {
+	ifacesNames := make(map[string]struct{}, len(interfaces))
 	for _, iface := range interfaces {
-		ifaceNames = append(ifaceNames, iface.Name)
+		ifacesNames[iface.Name] = struct{}{}
 	}
-	return ifaceNames
+
+	return ifacesNames
 }
 
 // FilterStatusInterfacesByNames returns filtered slice of interfaces by the given slice of names.

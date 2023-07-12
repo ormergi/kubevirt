@@ -94,15 +94,6 @@ var _ = Describe("VMI network spec", func() {
 
 	const iface1, iface2, iface3, iface4, iface5 = "iface1", "iface2", "iface3", "iface4", "iface5"
 
-	DescribeTable("return VMI spec interface names, given",
-		func(interfaces []v1.Interface, expectedNames []string) {
-			Expect(netvmispec.InterfacesNames(interfaces)).To(Equal(expectedNames))
-		},
-		Entry("no interfaces", nil, nil),
-		Entry("single interface", vmiSpecInterfaces(iface1), []string{iface1}),
-		Entry("more then one interface", vmiSpecInterfaces(iface1, iface2, iface3), []string{iface1, iface2, iface3}),
-	)
-
 	Context("pop interface by network", func() {
 		const netName = "net1"
 		network := podNetwork(netName)
