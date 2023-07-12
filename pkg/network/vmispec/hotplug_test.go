@@ -22,7 +22,6 @@ package vmispec_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	v1 "kubevirt.io/api/core/v1"
 
 	"kubevirt.io/kubevirt/pkg/network/vmispec"
@@ -105,7 +104,89 @@ var _ = Describe("utilitary funcs to identify attachments to hotplug", func() {
 			dummyVMIWithAttachmentAlreadyAvailableOnDomain(networkName, nadName, guestIfaceName),
 		),
 	)
+
+	DescribeTable("FilterIfacesForHotplug",
+		func(ifaces, expectedIfaces []v1.Interface) {
+			Expect(vmispec.FilterIfacesForHotplug(ifaces)).To(Equal(expectedIfaces))
+		},
+		Entry("given bridge iface",
+			[]v1.Interface{
+				{InterfaceBindingMethod: bridgeBinding()},
+			},
+			[]v1.Interface{{
+				InterfaceBindingMethod: bridgeBinding()},
+			},
+		),
+		Entry("given bridge iface with 'absent' state, should return no iface",
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+			nil,
+		),
+		Entry("given SR-IOV iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}},
+			nil,
+		),
+		Entry("given Slirp iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Slirp: &v1.InterfaceSlirp{}}}},
+			nil,
+		),
+		Entry("given Macvtap iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Macvtap: &v1.InterfaceMacvtap{}}}},
+			nil,
+		),
+		Entry("[misc] given Passt iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Passt: &v1.InterfacePasst{}}}},
+			nil,
+		),
+		Entry("[misc] given Masquerade iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Masquerade: &v1.InterfaceMasquerade{}}}},
+			nil,
+		),
+	)
+
+	DescribeTable("FilterIfacesForHotUnplug",
+		func(ifaces, expectedIfaces []v1.Interface) {
+			Expect(vmispec.FilterIfacesForHotUnplug(ifaces)).To(Equal(expectedIfaces))
+		},
+		Entry("given bridge iface with 'absent' state",
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+			[]v1.Interface{
+				{State: v1.InterfaceStateAbsent, InterfaceBindingMethod: bridgeBinding()},
+			},
+		),
+		Entry("given bridge iface with no 'absent' state, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: bridgeBinding()}},
+			nil,
+		),
+		Entry("given SR-IOV iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{SRIOV: &v1.InterfaceSRIOV{}}}},
+			nil,
+		),
+		Entry("given Slirp iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Slirp: &v1.InterfaceSlirp{}}}},
+			nil,
+		),
+		Entry("given Macvtap iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Macvtap: &v1.InterfaceMacvtap{}}}},
+			nil,
+		),
+		Entry("[misc] given Passt iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Passt: &v1.InterfacePasst{}}}},
+			nil,
+		),
+		Entry("[misc] given Masquerade iface, should return no iface",
+			[]v1.Interface{{InterfaceBindingMethod: v1.InterfaceBindingMethod{Masquerade: &v1.InterfaceMasquerade{}}}},
+			nil,
+		),
+	)
 })
+
+func bridgeBinding() v1.InterfaceBindingMethod {
+	return v1.InterfaceBindingMethod{Bridge: &v1.InterfaceBridge{}}
+}
 
 func dummyVMIWithoutStatus(networkName string, nadName string) *v1.VirtualMachineInstance {
 	vmi := newVMI()
