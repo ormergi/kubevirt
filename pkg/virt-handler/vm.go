@@ -2983,14 +2983,10 @@ func (d *VirtualMachineController) vmUpdateHelperDefault(origVMI *v1.VirtualMach
 
 		if d.clusterConfig.HotplugNetworkInterfacesEnabled() {
 			netsToHotplug := netvmispec.NetworksToHotplugWhosePodIfacesAreReady(vmi)
-			nonAbsentIfaces := netvmispec.FilterInterfacesSpec(vmi.Spec.Domain.Devices.Interfaces, func(iface v1.Interface) bool {
-				return iface.State != v1.InterfaceStateAbsent
-			})
-			netsToHotplug = netvmispec.FilterNetworksByInterfaces(netsToHotplug, nonAbsentIfaces)
+			ifacesToHotplug := netvmispec.FilterIfacesForHotplug(vmi.Spec.Domain.Devices.Interfaces)
+			netsToHotplug = netvmispec.FilterNetworksByInterfaces(netsToHotplug, ifacesToHotplug)
 
-			ifacesToHotunplug := netvmispec.FilterInterfacesSpec(vmi.Spec.Domain.Devices.Interfaces, func(iface v1.Interface) bool {
-				return iface.State == v1.InterfaceStateAbsent
-			})
+			ifacesToHotunplug := netvmispec.FilterIfacesForHotUnplug(vmi.Spec.Domain.Devices.Interfaces)
 			netsToHotunplug := netvmispec.FilterNetworksByInterfaces(vmi.Spec.Networks, ifacesToHotunplug)
 
 			setupNets := append(netsToHotplug, netsToHotunplug...)
