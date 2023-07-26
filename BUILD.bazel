@@ -191,6 +191,7 @@ container_bundle(
         "$(container_prefix)/$(image_prefix)example-hook-sidecar:$(container_tag)": "//cmd/example-hook-sidecar:example-hook-sidecar-image",
         "$(container_prefix)/$(image_prefix)example-disk-mutation-hook-sidecar:$(container_tag)": "//cmd/example-disk-mutation-hook-sidecar:example-disk-mutation-hook-sidecar-image",
         "$(container_prefix)/$(image_prefix)example-cloudinit-hook-sidecar:$(container_tag)": "//cmd/example-cloudinit-hook-sidecar:example-cloudinit-hook-sidecar-image",
+        "$(container_prefix)/$(image_prefix)netconf-hook-sidecar:$(container_tag)": "//cmd/netconf-hook-sidecar:netconf-sidecar-image",
         # container-disk images
         "$(container_prefix)/$(image_prefix)alpine-container-disk-demo:$(container_tag)": "//containerimages:alpine-container-disk-image",
         "$(container_prefix)/$(image_prefix)cirros-container-disk-demo:$(container_tag)": "//containerimages:cirros-container-disk-image",
@@ -343,6 +344,15 @@ container_push(
     image = "//cmd/example-cloudinit-hook-sidecar:example-cloudinit-hook-sidecar-image",
     registry = "$(container_prefix)",
     repository = "$(image_prefix)example-cloudinit-hook-sidecar",
+    tag = "$(container_tag)",
+)
+
+container_push(
+    name = "push-netconf-hook-sidecar",
+    format = "Docker",
+    image = "//cmd/netconf-hook-sidecar:netconf-hook-sidecar-image",
+    registry = "$(container_prefix)",
+    repository = "$(image_prefix)netconf-hook-sidecar",
     tag = "$(container_tag)",
 )
 
