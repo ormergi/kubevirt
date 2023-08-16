@@ -405,6 +405,10 @@ func NewControllerDeployment(namespace, repository, imagePrefix, controllerVersi
 		exporterImage = fmt.Sprintf("%s/%s%s%s", repository, imagePrefix, "virt-exportserver", AddVersionSeparatorPrefix(exportServerVersion))
 	}
 
+	// TODO: fetch the image from virt-operator env vars / Kubevirt CR
+	// fmt.Sprintf("%s/%s%s%s", repository, imagePrefix, "network-slirp-binding", AddVersionSeparatorPrefix(slirpPluginVersion))
+	slirpSidecarImage := "quay.io/kubevirt/network-slirp-binding:20230830_638c60fc8"
+
 	pod := &deployment.Spec.Template.Spec
 	pod.ServiceAccountName = ControllerServiceAccountName
 	pod.SecurityContext = &corev1.PodSecurityContext{
@@ -421,6 +425,8 @@ func NewControllerDeployment(namespace, repository, imagePrefix, controllerVersi
 		launcherImage,
 		"--exporter-image",
 		exporterImage,
+		"--slirp-sidecar-image",
+		slirpSidecarImage,
 		portName,
 		"8443",
 		"-v",

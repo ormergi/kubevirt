@@ -1,0 +1,1 @@
+# KubeVirt dummy hook sidecar
