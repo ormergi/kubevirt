@@ -3392,17 +3392,21 @@ func createBlockDataVolume(virtClient kubecli.KubevirtClient) (*cdiv1.DataVolume
 	return virtClient.CdiClient().CdiV1beta1().DataVolumes(testsuite.GetTestNamespace(nil)).Create(context.Background(), dataVolume, metav1.CreateOptions{})
 }
 
-func getKvmPitMask(qemupid, nodeName string) (output string, err error) {
-	kvmpitcomm := "kvm-pit/" + qemupid
-	args := []string{"pgrep", "-f", kvmpitcomm}
-	output, err = tests.ExecuteCommandInVirtHandlerPod(nodeName, args)
-	Expect(err).ToNot(HaveOccurred())
+func getKvmPitMask(qemuPID, nodeName string) (string, error) {
+	kvmpitCmd := fmt.Sprintf("kvm-pit/%s", qemuPID)
+	findKvmpitPID := []string{"pgrep", "-f", kvmpitCmd}
+	output, err := tests.ExecuteCommandInVirtHandlerPod(nodeName, findKvmpitPID)
+	if err != nil {
+		return "", err
+	}
+	kvmpitPID := strings.TrimSpace(output)
 
-	kvmpitpid := strings.TrimSpace(output)
-	tasksetcmd := "taskset -c -p " + kvmpitpid + " | cut -f2 -d:"
-	args = []string{tests.BinBash, "-c", tasksetcmd}
+	tasksetCmd := fmt.Sprintf("taskset -c -p  %s | cut -f2 -d:", kvmpitPID)
+	args := []string{tests.BinBash, "-c", tasksetCmd}
 	output, err = tests.ExecuteCommandInVirtHandlerPod(nodeName, args)
-	Expect(err).ToNot(HaveOccurred())
+	if err != nil {
+		return "", err
+	}
 
 	return strings.TrimSpace(output), err
 }
