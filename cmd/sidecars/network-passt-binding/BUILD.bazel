@@ -1,4 +1,5 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@bazeldnf//:deps.bzl", "rpm", "rpmtree")
 
 go_library(
     name = "go_default_library",
@@ -43,5 +44,13 @@ container_image(
     directory = "/",
     entrypoint = ["/network-passt-binding"],
     files = [":network-passt-binding"],
+    tars = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": [
+            "//rpm:network_passt_plugin_base_aarch64",
+        ],
+        "//conditions:default": [
+            "//rpm:network_passt_plugin_base_x86_64",
+        ],
+    }),
     visibility = ["//visibility:public"],
 )

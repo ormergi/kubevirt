@@ -119,7 +119,9 @@ for arg in $args; do
             LINUX_NAME=${ARCH_BASENAME}-linux-${ARCH}
 
             echo "building dynamic binary $BIN_NAME"
+            read -p "@@@"
             GOOS=linux GOARCH=${ARCH} go_build -tags "${KUBEVIRT_GO_BUILD_TAGS}" -o ${CMD_OUT_DIR}/${BIN_NAME}/${LINUX_NAME} -ldflags "$(kubevirt::version::ldflags)" $(pkg_dir linux ${ARCH})
+            read -p "!!!"
 
             (cd ${CMD_OUT_DIR}/${BIN_NAME} && ln -sf ${LINUX_NAME} ${BIN_NAME})
 
@@ -135,7 +137,6 @@ for arg in $args; do
                         else
                             extension=""
                         fi
-
                         GOOS=${os} GOARCH=${arch} go_build -tags "${KUBEVIRT_GO_BUILD_TAGS}" -o ${CMD_OUT_DIR}/${BIN_NAME}/${ARCH_BASENAME}-${os}-${arch}${extension} -ldflags "$(kubevirt::version::ldflags)" $(pkg_dir ${os} ${arch})
                         # Create symlinks to the latest binary
                         (cd ${CMD_OUT_DIR}/${BIN_NAME} && ln -sf ${ARCH_BASENAME}-${os}-${arch}${extension} ${BIN_NAME}-${os}-${arch}${extension})

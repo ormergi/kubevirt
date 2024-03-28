@@ -2398,3 +2398,23 @@ tar2files(
     tar = ":libvirt-devel_x86_64",
     visibility = ["//visibility:public"],
 )
+
+rpmtree(
+    name = "network_passt_plugin_base_x86_64",
+    rpms = [
+        "@bash-0__5.1.8-6.el9.x86_64//rpm",
+        "@glibc-0__2.34-88.el9.x86_64//rpm",
+        "@ncurses-libs-0__6.2-10.20210508.el9.x86_64//rpm",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rpmtree(
+    name = "network_passt_plugin_base_aarch64",
+    rpms = [
+        "@bash-0__5.1.8-6.el9.aarch64//rpm",
+        "@glibc-0__2.34-88.el9.aarch64//rpm",
+        "@ncurses-libs-0__6.2-10.20210508.el9.aarch64//rpm",
+    ],
+    visibility = ["//visibility:public"],
+)
